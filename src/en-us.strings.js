@@ -187,7 +187,7 @@ export default {
 	'pdfReader.toggleSidebar': 'Toggle Sidebar',
 	'pdfReader.findInDocument': 'Find in Document',
 	'pdfReader.toggleContextPane': 'Toggle Context Pane',
-	'pdfReader.highlightAll': 'Highlight all',
+	'pdfReader.highlightAll': 'Highlight alllllll',
 	'pdfReader.matchCase': 'Match case',
 	'pdfReader.wholeWords': 'Whole words',
 	'pdfReader.convertToHighlight': 'Convert to Highlight',
