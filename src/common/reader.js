@@ -843,6 +843,53 @@ class Reader {
 		}
 	}
 
+	/**
+    * Set the find query for the specified view and optionally open the find popup
+    * @param {string} query - The search query to set
+    * @param {Object} options - Configuration options
+    * @param {boolean} [options.primary=true] - Whether to set for primary view (true) or secondary view (false)
+    * @param {boolean} [options.openPopup=true] - Whether to open the find popup
+    * @param {boolean} [options.activateSearch=true] - Whether to immediately activate the search
+    * @example
+    * // Set query and open popup for primary view
+    * reader.setFindQuery("search term");
+    *
+    * // Set query without opening popup
+    * reader.setFindQuery("search term", { openPopup: false });
+    *
+    * // Set query for secondary view
+    * reader.setFindQuery("search term", { primary: false });
+    */
+	 setFindQuery(query, { primary = true, openPopup = true, activateSearch = true } = {}) {
+		if (primary === undefined) {
+			primary = this._lastViewPrimary;
+		}
+		let key = primary ? 'primaryViewFindState' : 'secondaryViewFindState';
+		let prevFindState = this._state[key];
+	   
+		let findState = {
+			...prevFindState,
+			query: query,
+			popupOpen: openPopup,
+			active: activateSearch,
+			result: null // Reset result when setting new query
+		};
+	   
+		this._updateState({ [key]: findState });
+		Zotero.debug("DeepTutorChatBox in reader.js: findState", findState);
+		// If opening popup, focus the input after a short delay
+		if (openPopup) {
+			setTimeout(() => {
+				let selector = (primary ? '.primary-view' : '.secondary-view') + ' .find-popup input';
+				const input = document.querySelector(selector);
+				if (input) {
+					input.select();
+					input.focus();
+				}
+			}, 100);
+		}
+	} 
+
 	_sidebarScrollAnnotationIntoViev(id) {
 		this._readerRef.current.sidebarScrollAnnotationIntoView(id);
 	}
