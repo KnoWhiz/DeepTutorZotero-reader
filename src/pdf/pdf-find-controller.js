@@ -853,6 +853,43 @@ class PDFFindController {
 			if (query !== this._rawQuery) {
 				this._rawQuery = query;
 				[this._normalizedQuery] = normalize(query);
+				
+				// Generate hyphen variants for letter-only queries
+				// This allows "batman" to match "bat-man", "bat man", "bat-\nman"
+				if (this._normalizedQuery && /^[a-zA-Z]+$/.test(this._normalizedQuery)) {
+					const baseQuery = this._normalizedQuery;
+					const hyphenVariants = [];
+					
+					// Original query
+					hyphenVariants.push(baseQuery);
+					
+					// Add hyphen variant: "batman" -> "bat-man"
+					if (baseQuery.length > 1) {
+						const hyphenVariant = baseQuery.replace(/([a-zA-Z])([a-zA-Z])/g, "$1-$2");
+						hyphenVariants.push(hyphenVariant);
+					}
+					
+					// Add space variant: "batman" -> "bat man"
+					if (baseQuery.length > 1) {
+						const spaceVariant = baseQuery.replace(/([a-zA-Z])([a-zA-Z])/g, "$1 $2");
+						hyphenVariants.push(spaceVariant);
+					}
+					
+					// Add hyphen-space variant: "batman" -> "bat- man"
+					if (baseQuery.length > 1) {
+						const hyphenSpaceVariant = baseQuery.replace(/([a-zA-Z])([a-zA-Z])/g, "$1- $2");
+						hyphenVariants.push(hyphenSpaceVariant);
+					}
+					
+					// Add space-hyphen variant: "batman" -> "bat -man"
+					if (baseQuery.length > 1) {
+						const spaceHyphenVariant = baseQuery.replace(/([a-zA-Z])([a-zA-Z])/g, "$1 -$2");
+						hyphenVariants.push(spaceHyphenVariant);
+					}
+					
+					// Remove duplicates and return as array
+					this._normalizedQuery = [...new Set(hyphenVariants)];
+				}
 			}
 			return this._normalizedQuery;
 		}
