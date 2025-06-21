@@ -482,10 +482,13 @@ function normalize(text) {
 				// The \n isn't in the original text so here y = i, n = X.len - 2 and
 				// o = X.len - 1.
 				const len = p5.length - 2;
+				// For hyphenated words, we want to remove the hyphen and newline
+				// to join the word parts. The character before the hyphen should remain.
 				positions.push([i - shift + len, 1 + shift]);
 				shift += 1;
 				shiftOrigin += 1;
 				eol += 1;
+				// Return the character before the hyphen (removing the hyphen and newline)
 				return p5.slice(0, -2);
 			}
 
@@ -1109,7 +1112,13 @@ class PDFFindController {
 							this._charMapping[i].push(j);
 						}
 						if (char.spaceAfter || char.lineBreakAfter || char.paragraphBreakAfter) {
-							text.push(' ');
+							// Check if the current character is a hyphen and the next break is a line break
+							// If so, preserve the newline for proper hyphenated word handling
+							if (char.u === "-" && char.lineBreakAfter) {
+								text.push('\n');
+							} else {
+								text.push(' ');
+							}
 							this._charMapping[i].push(j);
 						}
 					}
