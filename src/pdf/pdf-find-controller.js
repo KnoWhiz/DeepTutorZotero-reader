@@ -324,7 +324,7 @@ function normalize(text) {
 		// 30A0-30FF: Katakana
 		const CJK = "(?:\\p{Ideographic}|[\u3040-\u30FF])";
 		const HKDiacritics = "(?:\u3099|\u309A)";
-		const regexp = `([${replace}])|([${toNormalizeWithNFKC}])|(${HKDiacritics}\\n)|(\\p{M}+(?:-\\n)?)|(\\S-\\n)|(${CJK}\\n)|(\\n)`;
+		const regexp = `([${replace}])|([${toNormalizeWithNFKC}])|(${HKDiacritics}\\n)|(\\p{M}+(?:-\\n)?)|(\\S-\\n)|(\\S- )|(${CJK}\\n)|(\\n)`;
 
 		if (syllablePositions.length === 0) {
 			// Most of the syllables belong to Hangul so there are no need
@@ -387,7 +387,7 @@ function normalize(text) {
 
 	normalized = normalized.replace(
 		normalizationRegex,
-		(match, p1, p2, p3, p4, p5, p6, p7, p8, i) => {
+		(match, p1, p2, p3, p4, p5, p5a, p6, p7, p8, i) => {
 			i -= shiftOrigin;
 			if (p1) {
 				// Maybe fractions or quotations mark...
@@ -487,6 +487,17 @@ function normalize(text) {
 				shiftOrigin += 1;
 				eol += 1;
 				return p5.slice(0, -2);
+			}
+
+			if (p5a) {
+				// "X- " is removed because a hyphen followed by space
+				// is likely a hyphenated word that was broken during extraction.
+				// This handles the case where PDF text extraction converted newlines to spaces.
+				const len = p5a.length - 2;
+				positions.push([i - shift + len, 1 + shift]);
+				shift += 1;
+				shiftOrigin += 1;
+				return p5a.slice(0, -2);
 			}
 
 			if (p6) {
