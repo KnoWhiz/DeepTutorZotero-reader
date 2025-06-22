@@ -495,7 +495,8 @@ function normalize(text) {
 				// This handles the case where PDF text extraction converted newlines to spaces.
 				const len = p5a.length - 2;
 				positions.push([i - shift + len, 1 + shift]);
-				shift += 1;
+				//shift += 1;
+				console.log("p5a called", p5a);
 				shiftOrigin += 1;
 				return p5a.slice(0, -2);
 			}
