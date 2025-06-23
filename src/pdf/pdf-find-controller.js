@@ -493,12 +493,15 @@ function normalize(text) {
 				// "X- " is removed because a hyphen followed by space
 				// is likely a hyphenated word that was broken during extraction.
 				// This handles the case where PDF text extraction converted newlines to spaces.
-				const len = p5a.length - 2;
-				positions.push([i - shift + len, 1 + shift]);
-				//shift += 1;
-				console.log("p5a called", p5a);
-				shiftOrigin += 1;
-				return p5a.slice(0, -2);
+				// p5a matches "X- " where X is a non-whitespace character
+				// Both hyphen and space are in the original text, so we remove 2 characters
+				// and keep 1 character, creating a net removal of 1 character
+				const len = p5a.length - 2; // Length of the part we keep
+				positions.push([i - shift + len - 3, 2 + shift]);
+				console.log("p5a called9", p5a);
+				shift += 2; // Account for removing 1 character (2 removed - 1 kept = 1 shift)
+				//shiftOrigin += 2;
+				return p5a.slice(0, -2); // Remove the last 2 characters (hyphen and space)
 			}
 
 			if (p6) {
