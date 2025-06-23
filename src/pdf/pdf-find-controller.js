@@ -864,8 +864,8 @@ class PDFFindController {
 		if (typeof query === "string") {
 			if (query !== this._rawQuery) {
 				this._rawQuery = query;
-				// Remove soft hyphens (U+00AD) from the query before normalization
-				const queryWithoutSoftHyphens = query.replace(/\u00AD/g, "");
+				// Remove soft hyphens (U+00AD) and any following spaces or line breaks from the query before normalization
+				const queryWithoutSoftHyphens = query.replace(/\u00AD[\s\n\r]*/g, "");
 				[this._normalizedQuery] = normalize(queryWithoutSoftHyphens);
 			}
 			return this._normalizedQuery;
@@ -873,8 +873,8 @@ class PDFFindController {
 		// We don't bother caching the normalized search query in the Array-case,
 		// since this code-path is *essentially* unused in the default viewer.
 		return (query || []).filter(q => !!q).map(q => {
-			// Remove soft hyphens from each query in the array
-			const qWithoutSoftHyphens = q.replace(/\u00AD/g, "");
+			// Remove soft hyphens and any following spaces or line breaks from each query in the array
+			const qWithoutSoftHyphens = q.replace(/\u00AD[\s\n\r]*/g, "");
 			return normalize(qWithoutSoftHyphens)[0];
 		});
 	}
