@@ -324,7 +324,7 @@ function normalize(text) {
 		// 30A0-30FF: Katakana
 		const CJK = "(?:\\p{Ideographic}|[\u3040-\u30FF])";
 		const HKDiacritics = "(?:\u3099|\u309A)";
-		const regexp = `([${replace}])|([${toNormalizeWithNFKC}])|(${HKDiacritics}\\n)|(\\p{M}+(?:-\\n)?)|(\\S-\\n)|(${CJK}\\n)|(\\n)`;
+		const regexp = `([${replace}])|([${toNormalizeWithNFKC}])|(${HKDiacritics}\\n)|(\\p{M}+(?:-\\n)?)|(\\S-\\n)|(\\S- )|(${CJK}\\n)|(\\n)`;
 
 		if (syllablePositions.length === 0) {
 			// Most of the syllables belong to Hangul so there are no need
@@ -387,7 +387,7 @@ function normalize(text) {
 
 	normalized = normalized.replace(
 		normalizationRegex,
-		(match, p1, p2, p3, p4, p5, p6, p7, p8, i) => {
+		(match, p1, p2, p3, p4, p5, p5a, p6, p7, p8, i) => {
 			i -= shiftOrigin;
 			if (p1) {
 				// Maybe fractions or quotations mark...
@@ -487,6 +487,21 @@ function normalize(text) {
 				shiftOrigin += 1;
 				eol += 1;
 				return p5.slice(0, -2);
+			}
+
+			if (p5a) {
+				// "X- " is removed because a hyphen followed by space
+				// is likely a hyphenated word that was broken during extraction.
+				// This handles the case where PDF text extraction converted newlines to spaces.
+				// p5a matches "X- " where X is a non-whitespace character
+				// Both hyphen and space are in the original text, so we remove 2 characters
+				// and keep 1 character, creating a net removal of 1 character
+				const len = p5a.length - 2; // Length of the part we keep
+				positions.push([i - shift + len - 3, 2 + shift]);
+				console.log("p5a called9", p5a);
+				shift += 2; // Account for removing 1 character (2 removed - 1 kept = 1 shift)
+				//shiftOrigin += 2;
+				return p5a.slice(0, -2); // Remove the last 2 characters (hyphen and space)
 			}
 
 			if (p6) {
@@ -849,13 +864,19 @@ class PDFFindController {
 		if (typeof query === "string") {
 			if (query !== this._rawQuery) {
 				this._rawQuery = query;
-				[this._normalizedQuery] = normalize(query);
+				// Remove soft hyphens (U+00AD) and any following spaces or line breaks from the query before normalization
+				const queryWithoutSoftHyphens = query.replace(/\u00AD[\s\n\r]*/g, "");
+				[this._normalizedQuery] = normalize(queryWithoutSoftHyphens);
 			}
 			return this._normalizedQuery;
 		}
 		// We don't bother caching the normalized search query in the Array-case,
 		// since this code-path is *essentially* unused in the default viewer.
-		return (query || []).filter(q => !!q).map(q => normalize(q)[0]);
+		return (query || []).filter(q => !!q).map(q => {
+			// Remove soft hyphens and any following spaces or line breaks from each query in the array
+			const qWithoutSoftHyphens = q.replace(/\u00AD[\s\n\r]*/g, "");
+			return normalize(qWithoutSoftHyphens)[0];
+		});
 	}
 
 	_shouldDirtyMatch(state) {
