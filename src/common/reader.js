@@ -876,7 +876,6 @@ class Reader {
 		};
 	   
 		this._updateState({ [key]: findState });
-		Zotero.debug("DeepTutorChatBox in reader.js: findState", findState);
 		// If opening popup, focus the input after a short delay
 		if (openPopup) {
 			setTimeout(() => {
