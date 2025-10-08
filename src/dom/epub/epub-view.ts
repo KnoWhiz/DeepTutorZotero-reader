@@ -1231,7 +1231,7 @@ class EPUBView extends DOMView<EPUBViewState, EPUBViewData> {
 			let processor = this._find;
 			let result = await processor.next();
 			if (result) {
-				this.flow.scrollIntoView(result.range);
+				this.flow.scrollIntoView(result.range, { block: 'start' });
 			}
 			this._renderAnnotations();
 		}
@@ -1243,7 +1243,7 @@ class EPUBView extends DOMView<EPUBViewState, EPUBViewData> {
 			let processor = this._find;
 			let result = await processor.prev();
 			if (result) {
-				this.flow.scrollIntoView(result.range);
+				this.flow.scrollIntoView(result.range, { block: 'start' });
 			}
 			this._renderAnnotations();
 		}

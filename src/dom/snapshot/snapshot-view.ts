@@ -599,7 +599,7 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 		if (this._find) {
 			let result = this._find.next();
 			if (result) {
-				scrollIntoView(result.range.toRange(), { block: 'center' });
+				scrollIntoView(result.range.toRange(), { block: 'start' });
 			}
 			this._renderAnnotations();
 		}
@@ -610,7 +610,7 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 		if (this._find) {
 			let result = this._find.prev();
 			if (result) {
-				scrollIntoView(result.range.toRange(), { block: 'center' });
+				scrollIntoView(result.range.toRange(), { block: 'start' });
 			}
 			this._renderAnnotations();
 		}

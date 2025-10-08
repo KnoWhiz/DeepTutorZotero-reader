@@ -313,7 +313,7 @@ class PDFView {
 			linkService: this._iframeWindow.PDFViewerApplication.pdfViewer.linkService,
 			onNavigate: async (pageIndex, matchIndex) => {
 				let matchPositions = await this._findController.getMatchPositionsAsync(pageIndex);
-				this.navigateToPosition(matchPositions[matchIndex]);
+				this.navigateToPosition(matchPositions[matchIndex], { block: 'start' });
 			},
 			onUpdateMatches: ({ matchesCount }) => {
 				let result = {
