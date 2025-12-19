@@ -4,6 +4,7 @@ import ReaderUI from './components/reader-ui';
 import PDFView from '../pdf/pdf-view';
 import EPUBView from '../dom/epub/epub-view';
 import SnapshotView from '../dom/snapshot/snapshot-view';
+import DOCXView from '../docx/docx-view';
 import AnnotationManager from './annotation-manager';
 import {
 	createAnnotationContextMenu,
@@ -262,10 +263,20 @@ class Reader {
 			delete options.location;
 		}
 
-		this._primaryView = this._createView(true, options.location);
+		try {
+			this._primaryView = this._createView(true, options.location);
+		} catch (e) {
+			console.error('Failed to create primary view:', e);
+			this.setErrorMessage(`Failed to load document: ${e.message}`);
+			throw e;
+		}
 
 		if (selectAnnotationID) {
 			(async () => {
+				if (!this._primaryView) {
+					console.error('_primaryView is null, cannot await initializedPromise');
+					return;
+				}
 				await this._primaryView.initializedPromise;
 				this.setSelectedAnnotations([selectAnnotationID]);
 			})();
@@ -286,7 +297,10 @@ class Reader {
 						onNavigateBack={this.navigateBack.bind(this)}
 						onNavigateToPreviousPage={this.navigateToPreviousPage.bind(this)}
 						onNavigateToNextPage={this.navigateToNextPage.bind(this)}
-						onChangePageNumber={pageNumber => this._lastView.navigate({ pageNumber })}
+						onChangePageNumber={pageNumber => {
+						const view = this._getLastViewSafe();
+						if (view) view.navigate({ pageNumber });
+					}}
 						onChangeTool={this.setTool.bind(this)}
 						onToggleAppearancePopup={this.toggleAppearancePopup.bind(this)}
 						onToggleFind={this.toggleFindPopup.bind(this)}
@@ -425,7 +439,23 @@ class Reader {
 	}
 
 	get _lastView() {
-		return this._lastViewPrimary ? this._primaryView : this._secondaryView;
+		const view = this._lastViewPrimary ? this._primaryView : this._secondaryView;
+		if (!view) {
+			const viewName = this._lastViewPrimary ? '_primaryView' : '_secondaryView';
+			console.error(`_lastView getter: ${viewName} is null`);
+			throw new Error(`${viewName} is null - view was not created successfully`);
+		}
+		return view;
+	}
+
+	// Helper method to safely get the last view, returns null if view doesn't exist
+	_getLastViewSafe() {
+		try {
+			return this._lastView;
+		} catch (e) {
+			console.error('_getLastViewSafe: view is not available', e);
+			return null;
+		}
 	}
 
 	_updateState(state, init) {
@@ -526,7 +556,7 @@ class Reader {
 			this._secondaryView?.setFindState(this._state.secondaryViewFindState);
 		}
 
-		if (this._type === 'epub' || this._type === 'snapshot') {
+		if (this._type === 'epub' || this._type === 'docx' || this._type === 'snapshot') {
 			if (this._state.fontFamily !== previousState.fontFamily) {
 				this._primaryView?.setFontFamily(this._state.fontFamily);
 				this._secondaryView?.setFontFamily(this._state.fontFamily);
@@ -560,7 +590,12 @@ class Reader {
 						: 'enable-horizontal-split-view'
 				);
 				this._updateState({ secondaryViewState: { ...this._state.primaryViewState } });
-				this._secondaryView = this._createView(false);
+				try {
+					this._secondaryView = this._createView(false);
+				} catch (e) {
+					console.error('Failed to create secondary view:', e);
+					this._secondaryView = null;
+				}
 			}
 			// Unsplit
 			else if ((previousState.splitType || init) && !this._state.splitType) {
@@ -815,7 +850,10 @@ class Reader {
 		}
 		this._updateState({ [key]: open });
 		if (!open) {
-			this._lastView.focus();
+			const view = this._getLastViewSafe();
+			if (view) {
+				view.focus();
+			}
 		}
 	}
 
@@ -1049,8 +1087,11 @@ class Reader {
 		};
 
 		let data;
-		if (this._type === 'pdf') {
+		if (this._type === 'pdf' || this._type === 'docx') {
 			data = this._data;
+			if (!data && this._type === 'docx') {
+				console.error('DOCX: this._data is undefined');
+			}
 		}
 		else if (this._primaryView) {
 			data = this._primaryView.getData();
@@ -1058,6 +1099,10 @@ class Reader {
 		else {
 			data = this._data;
 			delete this._data;
+		}
+
+		if (this._type === 'docx' && !data) {
+			throw new Error('DOCX: data is required but is undefined');
 		}
 
 		let common = {
@@ -1103,26 +1148,31 @@ class Reader {
 		};
 
 		if (this._type === 'pdf') {
-			view = new PDFView({
-				...common,
-				password: this._password,
-				pageLabels: this._state.pageLabels,
-				onRequestPassword,
-				onSetThumbnails,
-				onSetPageLabels,
-				onDeleteAnnotations // For complete ink erase
-			});
-
-			if (primary) {
-				initPDFPrintService({
-					onProgress: (percent) => {
-						this._handleSetPrintPopup({ percent });
-					},
-					onFinish: () => {
-						this._handleSetPrintPopup(null);
-					},
-					pdfView: view
+			try {
+				view = new PDFView({
+					...common,
+					password: this._password,
+					pageLabels: this._state.pageLabels,
+					onRequestPassword,
+					onSetThumbnails,
+					onSetPageLabels,
+					onDeleteAnnotations // For complete ink erase
 				});
+
+				if (primary) {
+					initPDFPrintService({
+						onProgress: (percent) => {
+							this._handleSetPrintPopup({ percent });
+						},
+						onFinish: () => {
+							this._handleSetPrintPopup(null);
+						},
+						pdfView: view
+					});
+				}
+			} catch (e) {
+				console.error('Failed to create PDFView:', e);
+				throw e;
 			}
 		} else if (this._type === 'epub') {
 			view = new EPUBView({
@@ -1131,11 +1181,43 @@ class Reader {
 				hyphenate: this._state.hyphenate,
 				onEPUBEncrypted,
 			});
+		} else if (this._type === 'docx') {
+			console.debug('[DEBUG] Entered DOCX view creation block');
+			console.debug('[DEBUG] this._type:', this._type);
+			console.debug('[DEBUG] common.data:', common.data);
+			try {
+				if (!common.data) {
+					throw new Error('DOCX: common.data is undefined');
+				}
+				console.debug('[DEBUG] About to create DOCXView instance');
+				view = new DOCXView({
+					...common,
+					fontFamily: this._state.fontFamily,
+					hyphenate: this._state.hyphenate,
+				});
+				console.debug('[DEBUG] DOCXView created, view =', view);
+				if (!view) {
+					throw new Error('DOCXView constructor returned undefined');
+				}
+			} catch (e) {
+				console.error('Failed to create DOCXView:', e);
+				console.error('common.data:', common.data);
+				throw e;
+			}
 		} else if (this._type === 'snapshot') {
-			view = new SnapshotView({
-				...common,
-				onSetZoom
-			});
+			try {
+				view = new SnapshotView({
+					...common,
+					onSetZoom
+				});
+			} catch (e) {
+				console.error('Failed to create SnapshotView:', e);
+				throw e;
+			}
+		}
+
+		if (!view) {
+			throw new Error(`Failed to create view for type: ${this._type}. View constructor did not throw but view is undefined.`);
 		}
 
 		if (primary) {
@@ -1235,34 +1317,48 @@ class Reader {
 	}
 
 	zoomIn() {
-		this._lastView.zoomIn();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomIn();
 	}
 
 	zoomOut() {
-		this._lastView.zoomOut();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomOut();
 	}
 
 	zoomReset() {
-		this._lastView.zoomReset();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomReset();
 	}
 
 	zoomAuto() {
 		this._ensureType('pdf');
-		this._lastView.zoomAuto();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomAuto();
 	}
 
 	zoomPageWidth() {
 		this._ensureType('pdf');
-		this._lastView.zoomPageWidth();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomPageWidth();
 	}
 
 	zoomPageHeight() {
 		this._ensureType('pdf');
-		this._lastView.zoomPageHeight();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomPageHeight();
 	}
 
 	async navigate(location, options) {
-		await this._lastView.initializedPromise;
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		await view.initializedPromise;
 		// Select the annotation instead of just navigating when navigation is triggered externally
 		if (
 			location.annotationID
@@ -1271,46 +1367,62 @@ class Reader {
 			this.setSelectedAnnotations([location.annotationID]);
 		}
 		else {
-			this._lastView.navigate(location, options);
+			view.navigate(location, options);
 		}
 	}
 
 	navigateBack() {
-		this._lastView.navigateBack();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateBack();
 	}
 
 	navigateForward() {
-		this._lastView.navigateForward();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateForward();
 	}
 
 	navigateToFirstPage() {
 		this._ensureType('pdf', 'epub');
-		this._lastView.navigateToFirstPage();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToFirstPage();
 	}
 
 	navigateToLastPage() {
 		this._ensureType('pdf', 'epub');
-		this._lastView.navigateToLastPage();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToLastPage();
 	}
 
 	navigateToPreviousPage() {
 		this._ensureType('pdf', 'epub');
-		this._lastView.navigateToPreviousPage();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToPreviousPage();
 	}
 
 	navigateToNextPage() {
 		this._ensureType('pdf', 'epub');
-		this._lastView.navigateToNextPage();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToNextPage();
 	}
 
 	navigateToPreviousSection() {
 		this._ensureType('epub');
-		this._lastView.navigateToPreviousSection();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToPreviousSection();
 	}
 
 	navigateToNextSection() {
 		this._ensureType('epub');
-		this._lastView.navigateToNextSection();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToNextSection();
 	}
 
 	// Note: It's a bit weird, but this function is also used to deselect text in views, if an empty ids array is provided
@@ -1424,7 +1536,8 @@ class Reader {
 							}
 						}
 						else {
-							this._lastView.navigate({ annotationID: annotation.id });
+							const view = this._getLastViewSafe();
+							if (view) view.navigate({ annotationID: annotation.id });
 						}
 					}
 					// After a small delay for focus to settle, announce to screen readers that annotation
@@ -1554,6 +1667,10 @@ class Reader {
 		primary = primary || !this._secondaryView;
 		this._lastViewPrimary = primary;
 		let view = primary ? this._primaryView : this._secondaryView;
+		if (!view) {
+			console.error(`focusView: ${primary ? '_primaryView' : '_secondaryView'} is null`);
+			return;
+		}
 		view.focus();
 		this._updateState({ primary });
 		if (primary) {
@@ -1611,10 +1728,21 @@ class Reader {
 	reload(data) {
 		this._data = data;
 		this._primaryViewContainer.replaceChildren();
-		this._primaryView = this._createView(true);
+		try {
+			this._primaryView = this._createView(true);
+		} catch (e) {
+			console.error('Failed to create primary view in reload:', e);
+			this.setErrorMessage(`Failed to reload document: ${e.message}`);
+			throw e;
+		}
 		if (this._state.splitType) {
 			this._secondaryViewContainer.replaceChildren();
-			this._secondaryView = this._createView(false);
+			try {
+				this._secondaryView = this._createView(false);
+			} catch (e) {
+				console.error('Failed to create secondary view in reload:', e);
+				this._secondaryView = null;
+			}
 		}
 	}
 
@@ -1769,7 +1897,9 @@ class Reader {
 
 	set scrollMode(value) {
 		this._ensureType('pdf');
-		this._lastView.setScrollMode(value);
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.setScrollMode(value);
 	}
 
 	get spreadMode() {
@@ -1779,7 +1909,9 @@ class Reader {
 
 	set spreadMode(value) {
 		this._ensureType('pdf', 'epub');
-		this._lastView.setSpreadMode(value);
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.setSpreadMode(value);
 	}
 
 	get canCopy() {
@@ -1857,7 +1989,9 @@ class Reader {
 
 	set flowMode(value) {
 		this._ensureType('epub');
-		this._lastView.setFlowMode(value);
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.setFlowMode(value);
 	}
 }
 
