@@ -15,7 +15,8 @@ import {
 	moveRangeEndsIntoTextNodes,
 	PersistentRange,
 	splitRangeToTextNodes,
-	getBoundingPageRect
+	getBoundingPageRect,
+	getInnerText
 } from "../dom/common/lib/range";
 import { FragmentSelector, FragmentSelectorConformsTo, isFragment, Selector, CssSelector, textPositionFromRange, textPositionToRange } from "../dom/common/lib/selector";
 import DOMView, {
@@ -24,7 +25,7 @@ import DOMView, {
 	NavigateOptions,
 	ReflowableAppearance
 } from "../dom/common/dom-view";
-import { closestElement, getContainingBlock, getInnerText, iterateWalker } from "../dom/common/lib/nodes";
+import { closestElement, getContainingBlock, iterateWalker } from "../dom/common/lib/nodes";
 import { A11Y_VIRT_CURSOR_DEBOUNCE_LENGTH } from "../common/defines";
 import { debounce } from '../common/lib/debounce';
 import { placeA11yVirtualCursor } from '../common/lib/utilities';
@@ -148,31 +149,9 @@ class DOCXView extends DOMView {
 		// Render HTML content
 		this._contentContainer.innerHTML = this._htmlContent;
 		
-		// Make content selectable and annotatable
-		this._enableAnnotations();
-	}
-
-	_enableAnnotations() {
-		// Enable text selection for annotations
-		// Similar to EPUB view implementation
-		this._contentContainer.addEventListener('mouseup', (e) => {
-			this._handleTextSelection(e);
-		});
-	}
-
-	_handleTextSelection(event) {
-		const selection = this._iframeWindow.getSelection();
-		if (!selection || selection.rangeCount === 0) {
-			return;
-		}
-		
-		const range = selection.getRangeAt(0);
-		if (range.collapsed) {
-			return;
-		}
-		
-		// Handle annotation creation based on current tool
-		// Similar to EPUB implementation
+		// Annotation handling is done automatically by the base DOMView class
+		// through pointer events (pointerdown, pointerup) and selectionchange events
+		// No additional setup needed here
 	}
 
 	async _loadOutline() {
@@ -460,13 +439,39 @@ class DOCXView extends DOMView {
 	}
 
 	_getAnnotationFromRange(range, type, color) {
+		// Move range ends into text nodes for accurate selection
+		range = moveRangeEndsIntoTextNodes(range);
 		if (range.collapsed) {
 			return null;
 		}
-		const text = type == 'highlight' || type == 'underline' ? getInnerText(range).trim() : undefined;
-		// If this annotation type wants text, but we didn't get any, abort
-		if (text === '') {
-			return null;
+		
+		let text;
+		if (type == 'highlight' || type == 'underline') {
+			// Use splitRangeToTextNodes for better handling of multi-block selections (like EPUB)
+			text = '';
+			let lastSplitRange;
+			for (let splitRange of splitRangeToTextNodes(range)) {
+				if (lastSplitRange) {
+					let lastSplitRangeContainer = closestElement(lastSplitRange.commonAncestorContainer);
+					let lastSplitRangeBlock = lastSplitRangeContainer && getContainingBlock(lastSplitRangeContainer);
+					let splitRangeContainer = closestElement(splitRange.commonAncestorContainer);
+					let splitRangeBlock = splitRangeContainer && getContainingBlock(splitRangeContainer);
+					if (lastSplitRangeBlock !== splitRangeBlock) {
+						text += '\n\n';
+					}
+				}
+				text += splitRange.toString().replace(/\s+/g, ' ');
+				lastSplitRange = splitRange;
+			}
+			text = text.trim();
+
+			// If this annotation type wants text, but we didn't get any, abort
+			if (!text) {
+				return null;
+			}
+		}
+		else {
+			text = undefined;
 		}
 
 		const selector = this.toSelector(range);
@@ -474,7 +479,7 @@ class DOCXView extends DOMView {
 			return null;
 		}
 
-		// Calculate sort index based on character position from body start
+		// Calculate sort index based on character position from body start (like snapshot view)
 		const getCount = (root, stopContainer, stopOffset) => {
 			const iter = this._iframeDocument.createNodeIterator(root, NodeFilter.SHOW_TEXT);
 			let count = 0;
@@ -488,7 +493,11 @@ class DOCXView extends DOMView {
 		};
 
 		const count = getCount(this._iframeDocument.body, range.startContainer, range.startOffset);
-		const sortIndex = String(count).padStart(10, '0');
+		// Use 10 digits like we had, but ensure it doesn't exceed that length
+		let sortIndex = String(count).padStart(10, '0');
+		if (sortIndex.length > 10) {
+			sortIndex = sortIndex.substring(0, 10);
+		}
 
 		return {
 			type,
