@@ -21,6 +21,7 @@ import { IconNoteLarge } from "../../../../common/components/common/icons";
 import { closestElement, isRTL, isVertical } from "../../lib/nodes";
 import { isSafari } from "../../../../common/lib/utilities";
 import { expandRect, getBoundingRect, rectsEqual } from "../../lib/rect";
+// @ts-ignore - classnames doesn't have type definitions but is used throughout the codebase
 import cx from "classnames";
 
 export type DisplayedAnnotation = {
@@ -37,7 +38,7 @@ export type DisplayedAnnotation = {
 };
 
 export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
-	let { iframe, annotations, selectedAnnotationIDs, onPointerDown, onPointerUp, onContextMenu, onDragStart, onResizeStart, onResizeEnd } = props;
+	let { iframe, annotations, selectedAnnotationIDs, onPointerDown, onPointerUp, onContextMenu, onDragStart, onResizeStart, onResizeEnd, onTextChange } = props;
 
 	let [isResizing, setResizing] = useState(false);
 	let [isPointerDownOutside, setPointerDownOutside] = useState(false);
@@ -126,6 +127,9 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 	let numSelectedHighlightUnderlines = 0;
 	let notes: DisplayedAnnotation[] = [];
 	let notePreviews: DisplayedAnnotation[] = [];
+	let textAnnotations: DisplayedAnnotation[] = [];
+	let imageAnnotations: DisplayedAnnotation[] = [];
+	let inkAnnotations: DisplayedAnnotation[] = [];
 	for (let annotation of annotations) {
 		if (annotation.type === 'highlight' || annotation.type === 'underline') {
 			// Put selected highlights/underlines at the end of the array,
@@ -149,6 +153,15 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 			else {
 				notePreviews.push(annotation);
 			}
+		}
+		else if (annotation.type === 'text') {
+			textAnnotations.push(annotation);
+		}
+		else if (annotation.type === 'image') {
+			imageAnnotations.push(annotation);
+		}
+		else if (annotation.type === 'ink') {
+			inkAnnotations.push(annotation);
 		}
 	}
 
@@ -188,6 +201,38 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 			{notePreviews.map(annotation => (
 				<NotePreview annotation={annotation} key={annotation.key} />
 			))}
+			{textAnnotations.map(annotation => (
+				<TextAnnotation
+					annotation={annotation}
+					key={annotation.key}
+					iframe={iframe}
+					selected={annotation.id ? selectedAnnotationIDs.includes(annotation.id) : false}
+					onPointerDown={annotation.id ? handlePointerDown : undefined}
+					onPointerUp={annotation.id ? handlePointerUp : undefined}
+					onContextMenu={annotation.id ? handleContextMenu : undefined}
+					onTextChange={onTextChange}
+				/>
+			))}
+			{imageAnnotations.map(annotation => (
+				<ImageAnnotation
+					annotation={annotation}
+					key={annotation.key}
+					selected={annotation.id ? selectedAnnotationIDs.includes(annotation.id) : false}
+					onPointerDown={annotation.id ? handlePointerDown : undefined}
+					onPointerUp={annotation.id ? handlePointerUp : undefined}
+					onContextMenu={annotation.id ? handleContextMenu : undefined}
+				/>
+			))}
+			{inkAnnotations.map(annotation => (
+				<InkAnnotation
+					annotation={annotation}
+					key={annotation.key}
+					selected={annotation.id ? selectedAnnotationIDs.includes(annotation.id) : false}
+					onPointerDown={annotation.id ? handlePointerDown : undefined}
+					onPointerUp={annotation.id ? handlePointerUp : undefined}
+					onContextMenu={annotation.id ? handleContextMenu : undefined}
+				/>
+			))}
 		</svg>
 		<svg
 			className={cx('annotation-container', { 'disable-pointer-events': pointerEventsSuppressed })}
@@ -206,6 +251,208 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 };
 AnnotationOverlay.displayName = 'AnnotationOverlay';
 
+// Text annotation component
+let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
+	let { annotation, selected, onPointerDown, onPointerUp, onContextMenu, iframe, onTextChange } = props;
+	
+	// Get position data from annotation
+	const positionData = (annotation as any)._positionData;
+	if (!positionData || !positionData.rects || !positionData.rects[0]) {
+		return null;
+	}
+	
+	const rect = positionData.rects[0];
+	
+	// Get document from iframe instead of range (range might be from temporary element)
+	const doc = iframe?.contentDocument;
+	if (!doc || !doc.defaultView) {
+		return null;
+	}
+	
+	// Use getBoundingPageRect to convert range to page coordinates (like other annotations)
+	// But since we have absolute coordinates, we can use them directly
+	// The rect coordinates are already in document/page coordinates
+	const pageRect = {
+		x: rect[0],
+		y: rect[1],
+		width: rect[2] - rect[0],
+		height: rect[3] - rect[1]
+	};
+	
+	// Get text content from annotation.comment (like PDF does)
+	const textValue = annotation.comment || '';
+	
+	const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+		if (annotation.id && onTextChange) {
+			onTextChange(annotation.id, event.target.value);
+		}
+	};
+	
+	const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		if (event.key === 'Escape') {
+			event.stopPropagation();
+			event.preventDefault();
+			event.currentTarget.blur();
+		}
+	};
+	
+	return (
+		<g
+			data-annotation-id={annotation.id}
+			onPointerDown={onPointerDown && (event => onPointerDown!(annotation, event))}
+			onPointerUp={onPointerUp && (event => onPointerUp!(annotation, event))}
+			onContextMenu={onContextMenu && (event => onContextMenu!(annotation, event))}
+		>
+			<foreignObject
+				x={pageRect.x}
+				y={pageRect.y}
+				width={pageRect.width}
+				height={pageRect.height}
+			>
+				<textarea
+					value={textValue}
+					onChange={handleInput}
+					onKeyDown={handleKeyDown}
+					style={{
+						width: '100%',
+						height: '100%',
+						border: selected ? '2px solid #6d95e0' : '1px solid rgba(0,0,0,0.2)',
+						padding: '2px',
+						fontSize: `${positionData.fontSize || 16}px`,
+						fontFamily: 'inherit',
+						color: annotation.color || '#000000',
+						background: 'transparent',
+						resize: 'none',
+						overflow: 'hidden',
+						outline: 'none'
+					}}
+					placeholder="Text annotation"
+					disabled={annotation.readOnly}
+					dir="auto"
+				/>
+			</foreignObject>
+		</g>
+	);
+};
+TextAnnotation.displayName = 'TextAnnotation';
+TextAnnotation = memo(TextAnnotation);
+type TextAnnotationProps = {
+	annotation: DisplayedAnnotation;
+	iframe: HTMLIFrameElement;
+	selected: boolean;
+	onPointerDown?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onPointerUp?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onContextMenu?: (annotation: DisplayedAnnotation, event: React.MouseEvent) => void;
+	onTextChange?: (id: string, text: string) => void;
+};
+
+// Image annotation component
+let ImageAnnotation: React.FC<ImageAnnotationProps> = (props) => {
+	let { annotation, selected, onPointerDown, onPointerUp, onContextMenu } = props;
+	
+	// Get position data from annotation
+	const positionData = (annotation as any)._positionData;
+	if (!positionData || !positionData.rects || !positionData.rects[0]) {
+		return null;
+	}
+	
+	const rect = positionData.rects[0];
+	const doc = annotation.range.commonAncestorContainer.ownerDocument;
+	if (!doc || !doc.defaultView) {
+		return null;
+	}
+	
+	// Convert to page coordinates
+	const pageRect = {
+		x: rect[0],
+		y: rect[1],
+		width: rect[2] - rect[0],
+		height: rect[3] - rect[1]
+	};
+	
+	return (
+		<g
+			data-annotation-id={annotation.id}
+			onPointerDown={onPointerDown && (event => onPointerDown!(annotation, event))}
+			onPointerUp={onPointerUp && (event => onPointerUp!(annotation, event))}
+			onContextMenu={onContextMenu && (event => onContextMenu!(annotation, event))}
+		>
+			<rect
+				x={pageRect.x}
+				y={pageRect.y}
+				width={pageRect.width}
+				height={pageRect.height}
+				fill="none"
+				stroke={annotation.color || '#000000'}
+				strokeWidth={selected ? 3 : 2}
+				strokeDasharray={selected ? undefined : "5,5"}
+				opacity={selected ? 1 : 0.7}
+			/>
+		</g>
+	);
+};
+ImageAnnotation.displayName = 'ImageAnnotation';
+ImageAnnotation = memo(ImageAnnotation);
+type ImageAnnotationProps = {
+	annotation: DisplayedAnnotation;
+	selected: boolean;
+	onPointerDown?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onPointerUp?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onContextMenu?: (annotation: DisplayedAnnotation, event: React.MouseEvent) => void;
+};
+
+// Ink annotation component
+let InkAnnotation: React.FC<InkAnnotationProps> = (props) => {
+	let { annotation, selected, onPointerDown, onPointerUp, onContextMenu } = props;
+	
+	// Get position data from annotation
+	const positionData = (annotation as any)._positionData;
+	if (!positionData || !positionData.paths || !positionData.paths[0] || positionData.paths[0].length < 4) {
+		return null;
+	}
+	
+	const path = positionData.paths[0];
+	const width = positionData.width || 2;
+	const doc = annotation.range.commonAncestorContainer.ownerDocument;
+	if (!doc || !doc.defaultView) {
+		return null;
+	}
+	
+	// Build SVG path string
+	let pathData = `M ${path[0]} ${path[1]}`;
+	for (let i = 2; i < path.length; i += 2) {
+		pathData += ` L ${path[i]} ${path[i + 1]}`;
+	}
+	
+	return (
+		<g
+			data-annotation-id={annotation.id}
+			onPointerDown={onPointerDown && (event => onPointerDown!(annotation, event))}
+			onPointerUp={onPointerUp && (event => onPointerUp!(annotation, event))}
+			onContextMenu={onContextMenu && (event => onContextMenu!(annotation, event))}
+		>
+			<path
+				d={pathData}
+				fill="none"
+				stroke={annotation.color || '#000000'}
+				strokeWidth={width}
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				opacity={selected ? 1 : 0.8}
+			/>
+		</g>
+	);
+};
+InkAnnotation.displayName = 'InkAnnotation';
+InkAnnotation = memo(InkAnnotation);
+type InkAnnotationProps = {
+	annotation: DisplayedAnnotation;
+	selected: boolean;
+	onPointerDown?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onPointerUp?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onContextMenu?: (annotation: DisplayedAnnotation, event: React.MouseEvent) => void;
+};
+
 type AnnotationOverlayProps = {
 	iframe: HTMLIFrameElement;
 	annotations: DisplayedAnnotation[];
@@ -216,6 +463,7 @@ type AnnotationOverlayProps = {
 	onDragStart: (id: string, dataTransfer: DataTransfer) => void;
 	onResizeStart: (id: string) => void;
 	onResizeEnd: (id: string, range: Range, cancelled: boolean) => void;
+	onTextChange?: (id: string, text: string) => void;
 };
 
 let HighlightOrUnderline: React.FC<HighlightOrUnderlineProps> = (props) => {

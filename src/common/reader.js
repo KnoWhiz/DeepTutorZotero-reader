@@ -414,7 +414,9 @@ class Reader {
 						onOpenPageLabelPopup={this._handleOpenPageLabelPopup.bind(this)}
 						onOpenColorContextMenu={(params) => {
 							debugLog('[Reader] onOpenColorContextMenu called with params:', params);
-							this._onOpenContextMenu(createColorContextMenu(this, params));
+							const menuParams = createColorContextMenu(this, params);
+							debugLog('[Reader] onOpenColorContextMenu created menu params:', { x: menuParams.x, y: menuParams.y, itemGroupsCount: menuParams.itemGroups?.length });
+							this.openContextMenu(menuParams);
 						}}
 						onOpenAnnotationContextMenu={params => this._onOpenContextMenu(createAnnotationContextMenu(this, params))}
 						onOpenSelectorContextMenu={params => this._onOpenContextMenu(createSelectorContextMenu(this, params))}
@@ -528,7 +530,8 @@ class Reader {
 				lightTheme: state.lightTheme?.id || state.lightTheme,
 				darkTheme: state.darkTheme?.id || state.darkTheme,
 				tool: state.tool?.type || state.tool,
-				colorScheme: state.colorScheme
+				colorScheme: state.colorScheme,
+				contextMenu: state.contextMenu ? { x: state.contextMenu.x, y: state.contextMenu.y, itemGroupsCount: state.contextMenu.itemGroups?.length } : null
 			});
 		}
 
@@ -884,7 +887,9 @@ class Reader {
 	openContextMenu(params) {
 		debugLog('[Reader.openContextMenu] Called with params:', params);
 		this._onBringReaderToFront?.(true);
+		debugLog('[Reader.openContextMenu] About to call _updateState with contextMenu:', { x: params.x, y: params.y, itemGroupsCount: params.itemGroups?.length });
 		this._updateState({ contextMenu: params });
+		debugLog('[Reader.openContextMenu] _updateState called, checking if state was updated:', { hasContextMenu: !!this._state.contextMenu });
 		setTimeout(() => {
 			window.focus();
 			document.activeElement.blur();

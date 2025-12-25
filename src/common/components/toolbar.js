@@ -40,7 +40,19 @@ function Toolbar(props) {
 		props.onToggleSidebar(!props.sidebarOpen);
 	}
 
+	function debugLog(...args) {
+		console.log(...args);
+		try {
+			if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+				if (window.parent.Zotero && window.parent.Zotero.debug) {
+					window.parent.Zotero.debug('[Toolbar] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+				}
+			}
+		} catch (e) {}
+	}
+
 	function handleToolColorClick(event) {
+		debugLog('[Toolbar] Color selector clicked, current tool:', props.tool);
 		let br = event.currentTarget.getBoundingClientRect();
 		props.onOpenColorContextMenu({ x: br.left, y: br.bottom });
 	}
@@ -194,7 +206,7 @@ function Toolbar(props) {
 						onClick={() => handleToolClick('note')}
 					><IconNote/></button>
 				</Localized>
-				{props.type === 'pdf' && (
+				{(props.type === 'pdf' || props.type === 'docx') && (
 					<Localized id="reader-toolbar-text" attrs={{ title: true, 'aria-description': true }}>
 						<button
 							tabIndex={-1}
@@ -204,7 +216,7 @@ function Toolbar(props) {
 						><IconText/></button>
 					</Localized>
 				)}
-				{props.type === 'pdf' && (
+				{(props.type === 'pdf' || props.type === 'docx') && (
 					<Localized id="reader-toolbar-area" attrs={{ title: true, 'aria-description': true }}>
 						<button
 							tabIndex={-1}
@@ -214,7 +226,7 @@ function Toolbar(props) {
 						><IconImage/></button>
 					</Localized>
 				)}
-				{props.type === 'pdf' && (
+				{(props.type === 'pdf' || props.type === 'docx') && (
 					<Localized id="reader-toolbar-draw" attrs={{ title: true, 'aria-description': true }}>
 						<button
 							tabIndex={-1}

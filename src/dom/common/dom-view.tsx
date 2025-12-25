@@ -674,6 +674,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 				onDragStart={this._handleAnnotationDragStart}
 				onResizeStart={this._handleAnnotationResizeStart}
 				onResizeEnd={this._handleAnnotationResizeEnd}
+				onTextChange={this._handleTextAnnotationChange}
 			/>
 		);
 		if (synchronous) {
@@ -1440,6 +1441,11 @@ abstract class DOMView<State extends DOMViewState, Data> {
 		// If the resize ends over a link, that somehow counts as a click in Fx
 		// (even though the mousedown wasn't over the link - weird). Prevent that.
 		this._preventNextClickEvent();
+	};
+
+	private _handleTextAnnotationChange = (id: string, text: string) => {
+		// Update the annotation's comment (text content) when user types
+		this._options.onUpdateAnnotations([{ id, comment: text }]);
 	};
 
 	protected _handleCopy(event: ClipboardEvent) {

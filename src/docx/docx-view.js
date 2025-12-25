@@ -1,4 +1,6 @@
 import injectCSS from './stylesheets/inject.scss';
+import React from 'react';
+import { flushSync } from 'react-dom';
 import {
 	AnnotationType,
 	ArrayRect,
@@ -35,10 +37,15 @@ import { getUniqueSelectorContaining } from "../dom/common/lib/unique-selector";
 import { scrollIntoView } from "../dom/common/lib/scroll-into-view";
 import { isPageRectVisible } from "../dom/common/lib/rect";
 import { debounceUntilScrollFinishes } from "../common/lib/utilities";
+import { AnnotationOverlay } from "../dom/common/components/overlay/annotation-overlay";
 
 class DOCXView extends DOMView {
 	// Required abstract property
 	_find = null;
+	
+	// State for text/image/ink annotation creation
+	_pointerDownPosition = null;
+	_annotationAction = null;
 	
 	constructor(options) {
 		super(options);
@@ -708,6 +715,793 @@ class DOCXView extends DOMView {
 		// Dispatch resize event to trigger layout recalculation when sidebar opens/closes
 		// Similar to EPUBView implementation
 		this._iframeWindow.dispatchEvent(new Event('resize'));
+	}
+
+	// Override _openAnnotationPopup to handle text/image/ink annotations with absolute positioning
+	_openAnnotationPopup(annotation) {
+		function debugLog(...args) {
+			console.log('[DOCXView._openAnnotationPopup]', ...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._openAnnotationPopup] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+
+		if (!annotation) {
+			if (this._selectedAnnotationIDs.length != 1) {
+				debugLog('No annotation provided and not exactly one selected annotation');
+				return;
+			}
+			annotation = this._annotationsByID.get(this._selectedAnnotationIDs[0]);
+			if (!annotation) {
+				debugLog('Selected annotation not found');
+				return;
+			}
+		}
+
+		debugLog('Opening popup for annotation:', { type: annotation.type, id: annotation.id });
+
+		// For text/image/ink annotations, find the rendered element and get its bounding rect
+		// This is similar to how notes are handled, but for annotations rendered in SVG overlay
+		if (annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'ink') {
+			// Find the rendered annotation element in the SVG overlay
+			const annotationElem = this._annotationRenderRootEl.querySelector(`[data-annotation-id="${annotation.id}"]`);
+			if (annotationElem) {
+				debugLog('Found rendered annotation element, getting bounding rect');
+				// Get the bounding client rect of the rendered element
+				const clientRect = annotationElem.getBoundingClientRect();
+				debugLog('Client rect from element:', {
+					left: clientRect.left,
+					top: clientRect.top,
+					right: clientRect.right,
+					bottom: clientRect.bottom,
+					width: clientRect.width,
+					height: clientRect.height
+				});
+				// Scale the DOM rect (accounts for iframe scaling)
+				const scaledRect = this._scaleDOMRect(clientRect);
+				debugLog('Scaled rect:', {
+					left: scaledRect.left,
+					top: scaledRect.top,
+					right: scaledRect.right,
+					bottom: scaledRect.bottom
+				});
+				// Convert to viewport rect (for popup positioning)
+				const viewportRect = this._clientRectToViewportRect(scaledRect);
+				debugLog('Viewport rect:', {
+					left: viewportRect.left,
+					top: viewportRect.top,
+					right: viewportRect.right,
+					bottom: viewportRect.bottom
+				});
+				const popupRect = [viewportRect.left, viewportRect.top, viewportRect.right, viewportRect.bottom];
+				debugLog('Setting annotation popup with rect:', popupRect);
+				this._options.onSetAnnotationPopup({ rect: popupRect, annotation });
+				return;
+			}
+			else {
+				debugLog('WARNING: Annotation element not found in render root, falling back to parent implementation');
+			}
+		}
+
+		// For other annotation types, use parent implementation
+		debugLog('Using parent implementation for annotation type:', annotation.type);
+		super._openAnnotationPopup(annotation);
+	}
+
+	// Override pointer event handlers to support text/image/ink tools
+	_handlePointerDown(event) {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._handlePointerDown] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		
+		// Call parent implementation first
+		super._handlePointerDown(event);
+		
+		// Handle text/image/ink tools
+		if ((event.buttons & 1) === 1 && event.isPrimary) {
+			if (this._tool.type === 'text' || this._tool.type === 'image' || this._tool.type === 'ink') {
+				debugLog('[DOCXView._handlePointerDown] Tool type:', this._tool.type, 'Event:', {
+					clientX: event.clientX,
+					clientY: event.clientY,
+					scrollX: this._iframeWindow.scrollX,
+					scrollY: this._iframeWindow.scrollY
+				});
+				
+				// Store pointer down position in document coordinates
+				// clientX/Y are viewport coordinates, add scroll to get document coordinates
+				this._pointerDownPosition = {
+					x: event.clientX + this._iframeWindow.scrollX,
+					y: event.clientY + this._iframeWindow.scrollY
+				};
+				debugLog('[DOCXView._handlePointerDown] Pointer down position:', this._pointerDownPosition);
+				
+				if (this._tool.type === 'ink') {
+					// Start ink annotation immediately
+					this._annotationAction = {
+						type: 'ink',
+						paths: [[this._pointerDownPosition.x, this._pointerDownPosition.y]]
+					};
+					debugLog('[DOCXView._handlePointerDown] Starting ink annotation, action:', this._annotationAction);
+					this._previewAnnotation = this._createInkAnnotation(this._annotationAction);
+					debugLog('[DOCXView._handlePointerDown] Created preview ink annotation:', this._previewAnnotation ? 'success' : 'failed');
+					this._renderAnnotations();
+				}
+				else if (this._tool.type === 'text') {
+					// Start text annotation
+					this._annotationAction = {
+						type: 'text',
+						startX: this._pointerDownPosition.x,
+						startY: this._pointerDownPosition.y
+					};
+					debugLog('[DOCXView._handlePointerDown] Starting text annotation, action:', this._annotationAction);
+				}
+				else if (this._tool.type === 'image') {
+					// Start image annotation
+					this._annotationAction = {
+						type: 'image',
+						startX: this._pointerDownPosition.x,
+						startY: this._pointerDownPosition.y
+					};
+					debugLog('[DOCXView._handlePointerDown] Starting image annotation, action:', this._annotationAction);
+				}
+				
+				event.preventDefault();
+			}
+		}
+	}
+
+	_handlePointerMove(event) {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._handlePointerMove] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		
+		// Call parent implementation first
+		super._handlePointerMove(event);
+		
+		// Handle text/image/ink tools
+		if ((event.buttons & 1) === 1 && event.isPrimary && this._annotationAction) {
+			// Get current position in document coordinates
+			const currentX = event.clientX + this._iframeWindow.scrollX;
+			const currentY = event.clientY + this._iframeWindow.scrollY;
+			debugLog('[DOCXView._handlePointerMove] Action type:', this._annotationAction.type, 'Current position:', { x: currentX, y: currentY });
+			
+			if (this._annotationAction.type === 'ink') {
+				// Add point to ink path
+				this._annotationAction.paths[0].push(currentX, currentY);
+				debugLog('[DOCXView._handlePointerMove] Ink path length:', this._annotationAction.paths[0].length);
+				this._previewAnnotation = this._createInkAnnotation(this._annotationAction);
+				this._renderAnnotations();
+			}
+			else if (this._annotationAction.type === 'image') {
+				// Update image rectangle
+				const imageParams = {
+					startX: this._annotationAction.startX,
+					startY: this._annotationAction.startY,
+					endX: currentX,
+					endY: currentY
+				};
+				debugLog('[DOCXView._handlePointerMove] Image rectangle params:', imageParams);
+				this._previewAnnotation = this._createImageAnnotation(imageParams);
+				debugLog('[DOCXView._handlePointerMove] Created preview image annotation:', this._previewAnnotation ? 'success' : 'failed');
+				this._renderAnnotations();
+			}
+			// Text annotations are created on pointer up
+		}
+	}
+
+	_handlePointerUp(event) {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._handlePointerUp] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		
+		// Call parent implementation first
+		super._handlePointerUp(event);
+		
+		// Handle text/image/ink tools
+		if (event.isPrimary && this._annotationAction) {
+			debugLog('[DOCXView._handlePointerUp] Action type:', this._annotationAction.type, 'Has preview:', !!this._previewAnnotation);
+			
+			if (this._annotationAction.type === 'text') {
+				// Create text annotation at click position
+				if (this._pointerDownPosition) {
+					debugLog('[DOCXView._handlePointerUp] Creating text annotation at:', this._pointerDownPosition);
+					const annotation = this._createTextAnnotation(this._pointerDownPosition);
+					if (annotation) {
+						debugLog('[DOCXView._handlePointerUp] Text annotation created:', { type: annotation.type, sortIndex: annotation.sortIndex, hasPositionData: !!annotation._positionData });
+						const addedAnnotation = this._options.onAddAnnotation(annotation, true);
+						debugLog('[DOCXView._handlePointerUp] Text annotation added via onAddAnnotation, returned:', addedAnnotation);
+						
+						// Select the annotation and open popup (like PDF does)
+						if (addedAnnotation && addedAnnotation.id) {
+							debugLog('[DOCXView._handlePointerUp] Selecting annotation and opening popup, annotation ID:', addedAnnotation.id);
+							this._options.onSelectAnnotations([addedAnnotation.id], event);
+							this._renderAnnotations(true);
+							// Pass the annotation directly to _openAnnotationPopup so it can calculate the rect from position data
+							this._openAnnotationPopup(addedAnnotation);
+							debugLog('[DOCXView._handlePointerUp] Annotation popup opened');
+						}
+						else {
+							debugLog('[DOCXView._handlePointerUp] WARNING: onAddAnnotation did not return annotation with ID');
+							// Fallback: try to open popup anyway
+							this._openAnnotationPopup();
+						}
+					}
+					else {
+						debugLog('[DOCXView._handlePointerUp] Failed to create text annotation');
+					}
+				}
+				else {
+					debugLog('[DOCXView._handlePointerUp] No pointer down position for text annotation');
+				}
+			}
+			else if (this._annotationAction.type === 'image') {
+				// Create image annotation if rectangle is large enough
+				if (this._previewAnnotation) {
+					const rect = this._previewAnnotation._positionData?.rects?.[0];
+					debugLog('[DOCXView._handlePointerUp] Image annotation rect:', rect);
+					if (rect && Math.abs(rect[2] - rect[0]) > 10 && Math.abs(rect[3] - rect[1]) > 10) {
+						debugLog('[DOCXView._handlePointerUp] Image annotation is large enough, adding');
+						this._options.onAddAnnotation(this._previewAnnotation, true);
+						debugLog('[DOCXView._handlePointerUp] Image annotation added via onAddAnnotation');
+					}
+					else {
+						debugLog('[DOCXView._handlePointerUp] Image annotation too small, discarding');
+					}
+					this._previewAnnotation = null;
+					this._renderAnnotations();
+				}
+				else {
+					debugLog('[DOCXView._handlePointerUp] No preview annotation for image');
+				}
+			}
+			else if (this._annotationAction.type === 'ink') {
+				// Create ink annotation if path has enough points
+				if (this._previewAnnotation) {
+					const pathLength = this._annotationAction.paths[0].length;
+					debugLog('[DOCXView._handlePointerUp] Ink annotation path length:', pathLength);
+					if (pathLength >= 4) {
+						debugLog('[DOCXView._handlePointerUp] Ink annotation has enough points, adding');
+						this._options.onAddAnnotation(this._previewAnnotation, true);
+						debugLog('[DOCXView._handlePointerUp] Ink annotation added via onAddAnnotation');
+					}
+					else {
+						debugLog('[DOCXView._handlePointerUp] Ink annotation path too short, discarding');
+					}
+				}
+				else {
+					debugLog('[DOCXView._handlePointerUp] No preview annotation for ink');
+				}
+				this._previewAnnotation = null;
+				this._renderAnnotations();
+			}
+			
+			// Reset action state
+			debugLog('[DOCXView._handlePointerUp] Resetting action state');
+			this._annotationAction = null;
+			this._pointerDownPosition = null;
+		}
+	}
+
+	// Create text annotation at a specific position
+	_createTextAnnotation(position) {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._createTextAnnotation] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		
+		debugLog('[DOCXView._createTextAnnotation] Called with position:', position);
+		const fontSize = this._tool.size || 16;
+		debugLog('[DOCXView._createTextAnnotation] Font size:', fontSize);
+		const rect = [
+			position.x - fontSize / 2,
+			position.y - fontSize / 2,
+			position.x + fontSize / 2,
+			position.y + fontSize / 2
+		];
+		debugLog('[DOCXView._createTextAnnotation] Calculated rect:', rect);
+		debugLog('[DOCXView._createTextAnnotation] Rect details:', {
+			left: rect[0],
+			top: rect[1],
+			right: rect[2],
+			bottom: rect[3],
+			width: rect[2] - rect[0],
+			height: rect[3] - rect[1]
+		});
+		
+		// Create a range for the selector (use body as anchor since text annotations are absolutely positioned)
+		// We don't need to find a specific element since the position is stored in _positionData
+		debugLog('[DOCXView._createTextAnnotation] Creating range from body element');
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+		debugLog('[DOCXView._createTextAnnotation] Range created, body element:', {
+			tagName: this._iframeDocument.body.tagName,
+			hasChildren: this._iframeDocument.body.hasChildNodes(),
+			childCount: this._iframeDocument.body.childNodes.length
+		});
+		
+		debugLog('[DOCXView._createTextAnnotation] Calling toSelector with range');
+		const selector = this.toSelector(range);
+		if (!selector) {
+			debugLog('[DOCXView._createTextAnnotation] ERROR: Failed to create selector from body range');
+			return null;
+		}
+		debugLog('[DOCXView._createTextAnnotation] Selector created successfully:', {
+			type: selector.type,
+			value: selector.value || 'N/A',
+			hasRefinedBy: !!selector.refinedBy,
+			refinedByType: selector.refinedBy?.type || 'N/A'
+		});
+		
+		// Calculate sort index
+		debugLog('[DOCXView._createTextAnnotation] Calculating sort index');
+		debugLog('[DOCXView._createTextAnnotation] Range for sort index:', {
+			startContainer: range.startContainer.nodeName,
+			startOffset: range.startOffset,
+			endContainer: range.endContainer.nodeName,
+			endOffset: range.endOffset
+		});
+		const getCount = (root, stopContainer, stopOffset) => {
+			const iter = this._iframeDocument.createNodeIterator(root, NodeFilter.SHOW_TEXT);
+			let count = 0;
+			let nodeCount = 0;
+			for (let node of iterateWalker(iter)) {
+				nodeCount++;
+				if (stopContainer?.contains(node)) {
+					debugLog('[DOCXView._createTextAnnotation] Found stop container at node', nodeCount, 'count:', count, 'offset:', stopOffset);
+					return count + stopOffset;
+				}
+				const textLength = node.nodeValue?.trim().length || 0;
+				count += textLength;
+			}
+			debugLog('[DOCXView._createTextAnnotation] Reached end of document, total nodes:', nodeCount, 'total count:', count);
+			return 0;
+		};
+		const count = getCount(this._iframeDocument.body, range.startContainer, range.startOffset);
+		debugLog('[DOCXView._createTextAnnotation] Character count for sort index:', count);
+		const SORT_INDEX_LENGTH = 7;
+		let sortIndex = String(count).padStart(SORT_INDEX_LENGTH, '0');
+		if (sortIndex.length > SORT_INDEX_LENGTH) {
+			sortIndex = sortIndex.substring(0, SORT_INDEX_LENGTH);
+		}
+		debugLog('[DOCXView._createTextAnnotation] Final sort index:', sortIndex, '(length:', sortIndex.length, ')');
+		
+		debugLog('[DOCXView._createTextAnnotation] Creating annotation object');
+		const annotation = {
+			type: 'text',
+			color: this._tool.color,
+			sortIndex,
+			position: selector
+		};
+		debugLog('[DOCXView._createTextAnnotation] Base annotation object:', {
+			type: annotation.type,
+			color: annotation.color,
+			sortIndex: annotation.sortIndex,
+			hasPosition: !!annotation.position,
+			positionType: annotation.position?.type
+		});
+		
+		// Store position data for rendering
+		annotation._positionData = {
+			rects: [rect],
+			fontSize,
+			rotation: 0
+		};
+		debugLog('[DOCXView._createTextAnnotation] Position data added:', {
+			hasPositionData: !!annotation._positionData,
+			hasRects: !!annotation._positionData.rects,
+			rectsCount: annotation._positionData.rects?.length || 0,
+			fontSize: annotation._positionData.fontSize,
+			rotation: annotation._positionData.rotation
+		});
+		debugLog('[DOCXView._createTextAnnotation] Complete annotation object:', {
+			type: annotation.type,
+			color: annotation.color,
+			sortIndex: annotation.sortIndex,
+			hasPosition: !!annotation.position,
+			hasPositionData: !!annotation._positionData,
+			positionDataRects: annotation._positionData?.rects?.length || 0
+		});
+		debugLog('[DOCXView._createTextAnnotation] SUCCESS: Text annotation created and ready to return');
+		
+		return annotation;
+	}
+
+	// Create image annotation with rectangle
+	_createImageAnnotation({ startX, startY, endX, endY }) {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._createImageAnnotation] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		
+		debugLog('[DOCXView._createImageAnnotation] Called with:', { startX, startY, endX, endY });
+		const rect = [
+			Math.min(startX, endX),
+			Math.min(startY, endY),
+			Math.max(startX, endX),
+			Math.max(startY, endY)
+		];
+		debugLog('[DOCXView._createImageAnnotation] Calculated rect:', rect);
+		
+		// Create a range for the selector (use body as anchor)
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+		const selector = this.toSelector(range);
+		if (!selector) {
+			debugLog('[DOCXView._createImageAnnotation] Failed to create selector');
+			return null;
+		}
+		debugLog('[DOCXView._createImageAnnotation] Selector created:', selector.type);
+		
+		// Calculate sort index based on position
+		const SORT_INDEX_LENGTH = 7;
+		const sortIndex = String(Math.floor(rect[1])).padStart(SORT_INDEX_LENGTH, '0');
+		debugLog('[DOCXView._createImageAnnotation] Sort index:', sortIndex);
+		
+		const annotation = {
+			type: 'image',
+			color: this._tool.color,
+			sortIndex,
+			position: selector
+		};
+		
+		// Store position data for rendering
+		annotation._positionData = {
+			rects: [rect]
+		};
+		debugLog('[DOCXView._createImageAnnotation] Annotation created:', { type: annotation.type, hasPositionData: !!annotation._positionData });
+		
+		return annotation;
+	}
+
+	// Create ink annotation with path
+	_createInkAnnotation(action) {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._createInkAnnotation] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		
+		debugLog('[DOCXView._createInkAnnotation] Called with action:', { type: action.type, pathsLength: action.paths?.[0]?.length || 0 });
+		if (!action.paths || action.paths[0].length < 2) {
+			debugLog('[DOCXView._createInkAnnotation] Path too short, returning null');
+			return null;
+		}
+		
+		// Create a range for the selector (use body as anchor)
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+		const selector = this.toSelector(range);
+		if (!selector) {
+			debugLog('[DOCXView._createInkAnnotation] Failed to create selector');
+			return null;
+		}
+		debugLog('[DOCXView._createInkAnnotation] Selector created:', selector.type);
+		
+		// Calculate sort index based on first point
+		const SORT_INDEX_LENGTH = 7;
+		const sortIndex = String(Math.floor(action.paths[0][1])).padStart(SORT_INDEX_LENGTH, '0');
+		debugLog('[DOCXView._createInkAnnotation] Sort index:', sortIndex);
+		
+		const annotation = {
+			type: 'ink',
+			color: this._tool.color,
+			sortIndex,
+			position: selector
+		};
+		
+		// Store position data for rendering
+		annotation._positionData = {
+			paths: action.paths,
+			width: this._tool.size || 2
+		};
+		debugLog('[DOCXView._createInkAnnotation] Annotation created:', { 
+			type: annotation.type, 
+			hasPositionData: !!annotation._positionData,
+			pathPoints: annotation._positionData.paths[0].length,
+			width: annotation._positionData.width
+		});
+		
+		return annotation;
+	}
+
+	// Override _renderAnnotations to handle text/image/ink annotations with absolute positioning
+	_renderAnnotations(synchronous = false) {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._renderAnnotations] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		
+		debugLog('[DOCXView._renderAnnotations] Called, synchronous:', synchronous);
+		if (!this._annotationRenderRootEl) {
+			debugLog('[DOCXView._renderAnnotations] No annotation render root, returning');
+			return;
+		}
+		if (!this._showAnnotations) {
+			debugLog('[DOCXView._renderAnnotations] Annotations not shown, clearing');
+			this._annotationRenderRootEl.replaceChildren();
+			return;
+		}
+		
+		debugLog('[DOCXView._renderAnnotations] Processing', this._annotations.length, 'annotations');
+		// Process annotations, handling text/image/ink specially
+		let displayedAnnotations = this._annotations.map((annotation) => {
+			if (this._displayedAnnotationCache.has(annotation)) {
+				debugLog('[DOCXView._renderAnnotations] Using cached annotation:', annotation.id);
+				return this._displayedAnnotationCache.get(annotation);
+			}
+			
+			let range;
+			// For text/image/ink annotations, create range from stored position data
+			if ((annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'ink')
+					&& annotation._positionData) {
+				debugLog('[DOCXView._renderAnnotations] Creating range from position data for:', annotation.type, annotation.id);
+				range = this._createRangeFromPositionData(annotation._positionData);
+			}
+			else {
+				debugLog('[DOCXView._renderAnnotations] Creating range from selector for:', annotation.type, annotation.id);
+				range = this.toDisplayedRange(annotation.position);
+			}
+			
+			if (!range) {
+				debugLog('[DOCXView._renderAnnotations] Failed to create range for annotation:', annotation.id, annotation.type);
+				return null;
+			}
+			
+			let displayedAnnotation = {
+				id: annotation.id,
+				type: annotation.type,
+				color: annotation.color,
+				sortIndex: annotation.sortIndex,
+				text: annotation.text,
+				comment: annotation.comment,
+				readOnly: annotation.readOnly,
+				key: annotation.id,
+				range,
+				// Pass position data for rendering
+				_positionData: annotation._positionData
+			};
+			this._displayedAnnotationCache.set(annotation, displayedAnnotation);
+			debugLog('[DOCXView._renderAnnotations] Created displayed annotation:', annotation.id, annotation.type);
+			return displayedAnnotation;
+		}).filter(a => !!a);
+		
+		debugLog('[DOCXView._renderAnnotations] Filtered to', displayedAnnotations.length, 'displayed annotations');
+		
+		// Handle preview annotation
+		if (this._previewAnnotation) {
+			debugLog('[DOCXView._renderAnnotations] Processing preview annotation:', this._previewAnnotation.type);
+			let range;
+			if ((this._previewAnnotation.type === 'text' || this._previewAnnotation.type === 'image' || this._previewAnnotation.type === 'ink')
+					&& this._previewAnnotation._positionData) {
+				debugLog('[DOCXView._renderAnnotations] Creating range from position data for preview');
+				range = this._createRangeFromPositionData(this._previewAnnotation._positionData);
+			}
+			else {
+				debugLog('[DOCXView._renderAnnotations] Creating range from selector for preview');
+				range = this.toDisplayedRange(this._previewAnnotation.position);
+			}
+			if (range) {
+				debugLog('[DOCXView._renderAnnotations] Preview annotation range created, adding to displayed');
+				displayedAnnotations.push({
+					sourceID: this._draggingNoteAnnotation?.id,
+					type: this._previewAnnotation.type,
+					color: this._previewAnnotation.color,
+					sortIndex: this._previewAnnotation.sortIndex,
+					text: this._previewAnnotation.text,
+					comment: this._previewAnnotation.comment,
+					key: '_previewAnnotation',
+					range,
+					_positionData: this._previewAnnotation._positionData
+				});
+			}
+			else {
+				debugLog('[DOCXView._renderAnnotations] Failed to create range for preview annotation');
+			}
+		}
+		
+		// Filter visible annotations
+		displayedAnnotations = displayedAnnotations.filter(a => {
+			if (a.id === this._resizingAnnotationID) {
+				return true;
+			}
+			const boundingRect = this._getBoundingPageRectCached(a.range);
+			return isPageRectVisible(boundingRect, this._iframeWindow);
+		});
+		
+		// Get find annotations and highlighted position (from parent logic)
+		let findAnnotations = this._find?.getAnnotations();
+		if (findAnnotations) {
+			displayedAnnotations.push(...findAnnotations.map(a => ({
+				...a,
+				range: a.range.toRange(),
+			})));
+		}
+		if (this._highlightedPosition) {
+			let range = this.toDisplayedRange(this._highlightedPosition);
+			if (range) {
+				displayedAnnotations.push({
+					type: 'highlight',
+					color: '#bad6fb', // SELECTION_COLOR
+					key: '_highlightedPosition',
+					range,
+				});
+			}
+		}
+		
+		// Filter visible annotations
+		displayedAnnotations = displayedAnnotations.filter(a => {
+			if (a.id === this._resizingAnnotationID) {
+				return true;
+			}
+			const boundingRect = this._getBoundingPageRectCached(a.range);
+			return isPageRectVisible(boundingRect, this._iframeWindow);
+		});
+		
+		// Render using parent's rendering logic
+		let doRender = () => this._annotationRenderRoot.render(
+			React.createElement(AnnotationOverlay, {
+				iframe: this._iframe,
+				annotations: displayedAnnotations,
+				selectedAnnotationIDs: this._selectedAnnotationIDs,
+				onPointerDown: this._handleAnnotationPointerDown,
+				onPointerUp: this._handleAnnotationPointerUp,
+				onContextMenu: this._handleAnnotationContextMenu,
+				onDragStart: this._handleAnnotationDragStart,
+				onResizeStart: this._handleAnnotationResizeStart,
+				onResizeEnd: this._handleAnnotationResizeEnd
+			})
+		);
+		
+		if (synchronous) {
+			flushSync(doRender);
+		}
+		else {
+			doRender();
+		}
+	}
+
+	// Create a Range from position data (rects, paths, etc.)
+	_createRangeFromPositionData(positionData) {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView._createRangeFromPositionData] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		
+		debugLog('[DOCXView._createRangeFromPositionData] Called with positionData:', {
+			hasRects: !!positionData.rects,
+			hasPaths: !!positionData.paths,
+			rectsLength: positionData.rects?.length || 0,
+			pathsLength: positionData.paths?.length || 0
+		});
+		
+		const range = this._iframeDocument.createRange();
+		
+		// Clean up any existing temporary elements
+		if (this._tempAnnotationElements) {
+			debugLog('[DOCXView._createRangeFromPositionData] Cleaning up', this._tempAnnotationElements.length, 'temporary elements');
+			for (const elem of this._tempAnnotationElements) {
+				if (elem.parentNode) {
+					elem.parentNode.removeChild(elem);
+				}
+			}
+			this._tempAnnotationElements = [];
+		}
+		
+		if (positionData.rects && positionData.rects.length > 0) {
+			// For text/image annotations with rects
+			const rect = positionData.rects[0];
+			debugLog('[DOCXView._createRangeFromPositionData] Creating range from rect:', rect);
+			// Create a temporary element to represent the annotation area
+			const tempDiv = this._iframeDocument.createElement('div');
+			tempDiv.style.position = 'absolute';
+			tempDiv.style.left = `${rect[0]}px`;
+			tempDiv.style.top = `${rect[1]}px`;
+			tempDiv.style.width = `${rect[2] - rect[0]}px`;
+			tempDiv.style.height = `${rect[3] - rect[1]}px`;
+			tempDiv.style.pointerEvents = 'none';
+			tempDiv.style.visibility = 'hidden';
+			tempDiv.style.zIndex = '-1';
+			this._iframeDocument.body.appendChild(tempDiv);
+			range.selectNode(tempDiv);
+			debugLog('[DOCXView._createRangeFromPositionData] Created temp div and range for rect');
+			// Store reference to clean up later
+			if (!this._tempAnnotationElements) {
+				this._tempAnnotationElements = [];
+			}
+			this._tempAnnotationElements.push(tempDiv);
+		}
+		else if (positionData.paths && positionData.paths.length > 0) {
+			// For ink annotations with paths
+			const path = positionData.paths[0];
+			debugLog('[DOCXView._createRangeFromPositionData] Creating range from path, length:', path.length);
+			// Calculate bounding box
+			let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+			for (let i = 0; i < path.length; i += 2) {
+				minX = Math.min(minX, path[i]);
+				minY = Math.min(minY, path[i + 1]);
+				maxX = Math.max(maxX, path[i]);
+				maxY = Math.max(maxY, path[i + 1]);
+			}
+			debugLog('[DOCXView._createRangeFromPositionData] Path bounding box:', { minX, minY, maxX, maxY });
+			// Create a temporary element
+			const tempDiv = this._iframeDocument.createElement('div');
+			tempDiv.style.position = 'absolute';
+			tempDiv.style.left = `${minX}px`;
+			tempDiv.style.top = `${minY}px`;
+			tempDiv.style.width = `${maxX - minX}px`;
+			tempDiv.style.height = `${maxY - minY}px`;
+			tempDiv.style.pointerEvents = 'none';
+			tempDiv.style.visibility = 'hidden';
+			tempDiv.style.zIndex = '-1';
+			this._iframeDocument.body.appendChild(tempDiv);
+			range.selectNode(tempDiv);
+			debugLog('[DOCXView._createRangeFromPositionData] Created temp div and range for path');
+			if (!this._tempAnnotationElements) {
+				this._tempAnnotationElements = [];
+			}
+			this._tempAnnotationElements.push(tempDiv);
+		}
+		else {
+			debugLog('[DOCXView._createRangeFromPositionData] No valid position data, returning null');
+			return null;
+		}
+		
+		debugLog('[DOCXView._createRangeFromPositionData] Range created successfully');
+		return range;
 	}
 }
 
