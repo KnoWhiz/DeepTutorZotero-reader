@@ -81,6 +81,7 @@ class DOCXView extends DOMView {
 		this._iframeDocument.body.appendChild(this._contentContainer);
 		
 		// Load and render HTML content
+		// This now waits for content to be fully rendered and ready
 		await this._renderContent();
 		
 		// Set up find functionality
@@ -88,6 +89,17 @@ class DOCXView extends DOMView {
 		
 		// Load outline/structure
 		await this._loadOutline();
+		
+		// Ensure content is fully ready before initialization completes
+		// This matches the PDF viewer's pattern of waiting for document initialization
+		// The content should already be ready from _renderContent(), but this provides
+		// an additional guarantee that the DOM is stable and ready for interaction
+		await new Promise(resolve => {
+			// Use setTimeout to ensure any pending DOM operations complete
+			this._iframeWindow.setTimeout(() => {
+				resolve();
+			}, 0);
+		});
 	}
 
 	async _convertDOCXToHTML(buf) {
@@ -116,7 +128,9 @@ class DOCXView extends DOMView {
 		}
 		
 		// Set base styles for DOCX content
+		// Use CSS variables for theme-aware colors that will update dynamically
 		const baseStyle = this._iframeDocument.createElement('style');
+		baseStyle.id = 'docx-base-styles';
 		baseStyle.textContent = `
 			.docx-content {
 				padding: 2em;
@@ -124,15 +138,19 @@ class DOCXView extends DOMView {
 				margin: 0 auto;
 				font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 				line-height: 1.6;
+				background-color: var(--background-color, #ffffff);
+				color: var(--text-color, #121212);
 			}
 			.docx-content h1, .docx-content h2, .docx-content h3,
 			.docx-content h4, .docx-content h5, .docx-content h6 {
 				margin-top: 1.5em;
 				margin-bottom: 0.5em;
 				font-weight: bold;
+				color: var(--text-color, #121212);
 			}
 			.docx-content p {
 				margin: 0.5em 0;
+				color: var(--text-color, #121212);
 			}
 			.docx-content table {
 				border-collapse: collapse;
@@ -140,8 +158,9 @@ class DOCXView extends DOMView {
 				margin: 1em 0;
 			}
 			.docx-content table td, .docx-content table th {
-				border: 1px solid #ddd;
+				border: 1px solid var(--border-color, rgba(0, 0, 0, 0.2));
 				padding: 8px;
+				color: var(--text-color, #121212);
 			}
 		`;
 		this._iframeDocument.head.appendChild(baseStyle);
@@ -149,9 +168,45 @@ class DOCXView extends DOMView {
 		// Render HTML content
 		this._contentContainer.innerHTML = this._htmlContent;
 		
+		// Wait for DOM to be fully parsed and rendered before proceeding
+		// This ensures the content is ready for interaction, similar to how PDF waits for document initialization
+		await this._waitForContentReady();
+		
 		// Annotation handling is done automatically by the base DOMView class
 		// through pointer events (pointerdown, pointerup) and selectionchange events
 		// No additional setup needed here
+	}
+
+	/**
+	 * Wait for content to be fully rendered and ready for interaction.
+	 * This matches the PDF viewer's pattern of waiting for document initialization.
+	 */
+	async _waitForContentReady() {
+		// Wait for the next animation frame to ensure DOM is parsed
+		await new Promise(resolve => {
+			this._iframeWindow.requestAnimationFrame(() => {
+				// Wait for one more frame to ensure layout is complete
+				this._iframeWindow.requestAnimationFrame(() => {
+					resolve();
+				});
+			});
+		});
+
+		// Wait for any images to load (if any)
+		const images = this._contentContainer.querySelectorAll('img');
+		if (images.length > 0) {
+			await Promise.all(Array.from(images).map(img => {
+				if (img.complete) {
+					return Promise.resolve();
+				}
+				return new Promise((resolve, reject) => {
+					img.onload = resolve;
+					img.onerror = resolve; // Resolve even on error to not block initialization
+					// Timeout after 5 seconds to prevent indefinite waiting
+					setTimeout(resolve, 5000);
+				});
+			}));
+		}
 	}
 
 	async _loadOutline() {
@@ -493,10 +548,12 @@ class DOCXView extends DOMView {
 		};
 
 		const count = getCount(this._iframeDocument.body, range.startContainer, range.startOffset);
-		// Use 10 digits like we had, but ensure it doesn't exceed that length
-		let sortIndex = String(count).padStart(10, '0');
-		if (sortIndex.length > 10) {
-			sortIndex = sortIndex.substring(0, 10);
+		// Use 7 digits to match snapshot view format (validation accepts 7-8 digits)
+		// This matches the SORT_INDEX_LENGTH constant used in snapshot-view
+		const SORT_INDEX_LENGTH = 7;
+		let sortIndex = String(count).padStart(SORT_INDEX_LENGTH, '0');
+		if (sortIndex.length > SORT_INDEX_LENGTH) {
+			sortIndex = sortIndex.substring(0, SORT_INDEX_LENGTH);
 		}
 
 		return {
@@ -585,6 +642,66 @@ class DOCXView extends DOMView {
 			this._contentContainer.style.hyphens = hyphenate ? 'auto' : 'none';
 		}
 		super.setHyphenate(hyphenate);
+	}
+
+	/**
+	 * Override _updateColorScheme to also update DOCX content container
+	 * This enables dynamic theme switching without reloading, matching PDF behavior
+	 */
+	_updateColorScheme() {
+		function debugLog(...args) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+					if (window.parent.Zotero && window.parent.Zotero.debug) {
+						window.parent.Zotero.debug('[DOCXView] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		debugLog('[DOCXView._updateColorScheme] Called', {
+			lightTheme: this._lightTheme?.id,
+			darkTheme: this._darkTheme?.id,
+			colorScheme: this._colorScheme,
+			themeColorScheme: this._themeColorScheme
+		});
+		// Call parent implementation to update document root and annotation root
+		super._updateColorScheme();
+		
+		// Also update the content container and set border color variable
+		if (this._iframeDocument && this._theme) {
+			const root = this._iframeDocument.documentElement;
+			
+			// Calculate border color based on theme (lighter for dark themes, darker for light themes)
+			// Use a semi-transparent color that works with both light and dark backgrounds
+			const isDark = this._themeColorScheme === 'dark';
+			const borderColor = isDark 
+				? 'rgba(255, 255, 255, 0.2)' 
+				: 'rgba(0, 0, 0, 0.2)';
+			
+			// Set border color CSS variable for use in styles
+			root.style.setProperty('--border-color', borderColor);
+			
+			// Update content container directly if it exists
+			if (this._contentContainer) {
+				this._contentContainer.style.backgroundColor = this._theme.background;
+				this._contentContainer.style.color = this._theme.foreground;
+			}
+			
+			// Clear annotation cache and re-render annotations after theme change
+			// This ensures annotations are re-rendered with the new theme and handles
+			// any DOM changes that might have occurred
+			if (this.initialized) {
+				// Clear caches to force fresh rendering
+				this._displayedAnnotationCache = new WeakMap();
+				this._boundingPageRectCache = new WeakMap();
+				
+				// Re-render annotations after a brief delay to ensure DOM is stable
+				this._iframeWindow.requestAnimationFrame(() => {
+					this._renderAnnotations();
+				});
+			}
+		}
 	}
 
 	setSidebarOpen(_sidebarOpen) {

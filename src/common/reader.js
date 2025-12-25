@@ -27,6 +27,22 @@ import { debounce } from './lib/debounce';
 import { flushSync } from 'react-dom';
 import { getLocalizedString } from '../fluent';
 
+// Debug helper that logs to both iframe console and parent console (if available)
+function debugLog(...args) {
+	console.log(...args);
+	// Try to also log to parent console via Zotero if available
+	try {
+		if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+			// Try to access parent's Zotero
+			if (window.parent.Zotero && window.parent.Zotero.debug) {
+				window.parent.Zotero.debug('[Reader] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+			}
+		}
+	} catch (e) {
+		// Cross-origin or other error, ignore
+	}
+}
+
 // Compute style values for usage in views (CSS variables aren't sufficient for that)
 // Font family is necessary for text annotations
 window.computedFontFamily = window.getComputedStyle(document.body).getPropertyValue('font-family');
@@ -315,21 +331,62 @@ class Reader {
 							this._onChangeSidebarWidth(width);
 						}}
 						onChangeTheme={(theme) => {
-							if (getCurrentColorScheme(this._state.colorScheme) === 'dark') {
-								// For Zotero client use prefs to change theme
+							const currentColorScheme = getCurrentColorScheme(this._state.colorScheme);
+							debugLog('[Reader.onChangeTheme] Theme selected:', theme, 'Current color scheme:', currentColorScheme);
+							
+							// Determine if theme should be applied to light or dark slot
+							// Look up the theme object to check its background color
+							let themes = [...DEFAULT_THEMES, ...(this._state.customThemes || [])];
+							themes = new Map(themes.map(t => [t.id, t]));
+							let themeObj = theme ? themes.get(theme) : null;
+							
+							// Determine if theme is light or dark based on background color
+							// Calculate luminance: L = 0.299*R + 0.587*G + 0.114*B
+							let isDarkTheme = false;
+							if (themeObj && themeObj.background) {
+								const hex = themeObj.background.replace('#', '');
+								const r = parseInt(hex.substr(0, 2), 16);
+								const g = parseInt(hex.substr(2, 2), 16);
+								const b = parseInt(hex.substr(4, 2), 16);
+								const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+								isDarkTheme = luminance < 0.5; // Dark if luminance < 50%
+							} else if (theme === 'dark') {
+								// Special case: 'dark' theme is always dark
+								isDarkTheme = true;
+							}
+							
+							debugLog('[Reader.onChangeTheme] Theme type determined:', { isDarkTheme, themeId: theme, backgroundColor: themeObj?.background });
+							
+							if (isDarkTheme) {
+								// Apply to dark theme slot
+								// Always update the reader state immediately for dynamic updates
+								debugLog('[Reader.onChangeTheme] Calling setDarkTheme directly');
+								this.setDarkTheme(theme);
+								// Also call the callback to persist to preferences (for Zotero client)
 								if (this._onSetDarkTheme) {
-									this._onSetDarkTheme(theme);
-								}
-								else {
-									this.setDarkTheme(theme);
+									debugLog('[Reader.onChangeTheme] Also calling _onSetDarkTheme callback for persistence');
+									if (theme) {
+										this._onSetDarkTheme(theme);
+									}
+									else {
+										this._onSetDarkTheme(false);
+									}
 								}
 							}
 							else {
+								// Apply to light theme slot
+								// Always update the reader state immediately for dynamic updates
+								debugLog('[Reader.onChangeTheme] Calling setLightTheme directly');
+								this.setLightTheme(theme);
+								// Also call the callback to persist to preferences (for Zotero client)
 								if (this._onSetLightTheme) {
-									this._onSetLightTheme(theme);
-								}
-								else {
-									this.setLightTheme(theme);
+									debugLog('[Reader.onChangeTheme] Also calling _onSetLightTheme callback for persistence');
+									if (theme) {
+										this._onSetLightTheme(theme);
+									}
+									else {
+										this._onSetLightTheme(false);
+									}
 								}
 							}
 						}}
@@ -355,7 +412,10 @@ class Reader {
 						onDeleteAnnotations={this._annotationManager.deleteAnnotations.bind(this._annotationManager)}
 						onOpenTagsPopup={this._onOpenTagsPopup}
 						onOpenPageLabelPopup={this._handleOpenPageLabelPopup.bind(this)}
-						onOpenColorContextMenu={params => this._onOpenContextMenu(createColorContextMenu(this, params))}
+						onOpenColorContextMenu={(params) => {
+							debugLog('[Reader] onOpenColorContextMenu called with params:', params);
+							this._onOpenContextMenu(createColorContextMenu(this, params));
+						}}
 						onOpenAnnotationContextMenu={params => this._onOpenContextMenu(createAnnotationContextMenu(this, params))}
 						onOpenSelectorContextMenu={params => this._onOpenContextMenu(createSelectorContextMenu(this, params))}
 						onOpenThumbnailContextMenu={params => this._onOpenContextMenu(createThumbnailContextMenu(this, params))}
@@ -461,8 +521,26 @@ class Reader {
 	_updateState(state, init) {
 		let previousState = this._state;
 
+		// Debug: Log what's being updated
+		const updatedKeys = Object.keys(state);
+		if (updatedKeys.length > 0 && !init) {
+			debugLog('[Reader._updateState] Updating state:', updatedKeys, {
+				lightTheme: state.lightTheme?.id || state.lightTheme,
+				darkTheme: state.darkTheme?.id || state.darkTheme,
+				tool: state.tool?.type || state.tool,
+				colorScheme: state.colorScheme
+			});
+		}
+
 		this._state = { ...this._state, ...state };
-		this._readerRef.current?.setState(this._state);
+		
+		// Debug: Log React state update
+		if (this._readerRef.current) {
+			debugLog('[Reader._updateState] Calling React setState, ref exists:', !!this._readerRef.current);
+			this._readerRef.current?.setState(this._state);
+		} else {
+			debugLog('[Reader._updateState] Reader ref is null, cannot update React state');
+		}
 
 		if (this._state.annotations !== previousState.annotations) {
 			let annotations = this._state.annotations.filter(x => !x._hidden);
@@ -476,6 +554,14 @@ class Reader {
 		}
 
 		if (this._state.tool !== previousState.tool) {
+			debugLog('[Reader._updateState] Tool changed:', {
+				previous: previousState.tool?.type,
+				current: this._state.tool?.type,
+				previousColor: previousState.tool?.color,
+				currentColor: this._state.tool?.color,
+				primaryView: !!this._primaryView,
+				secondaryView: !!this._secondaryView
+			});
 			this._primaryView?.setTool(this._state.tool);
 			this._secondaryView?.setTool(this._state.tool);
 		}
@@ -490,15 +576,35 @@ class Reader {
 			this._secondaryView?.setOutline(this._state.outline);
 		}
 
-		if (init || this._state.lightTheme !== previousState.lightTheme) {
+		// Compare by theme ID to detect changes even if object reference is the same
+		let lightThemeChanged = init || 
+			(this._state.lightTheme?.id !== previousState.lightTheme?.id) ||
+			(this._state.lightTheme !== previousState.lightTheme);
+		if (lightThemeChanged) {
 			if (!init) {
+				debugLog('[Reader._updateState] Light theme changed:', {
+					previous: previousState.lightTheme?.id,
+					current: this._state.lightTheme?.id,
+					primaryView: !!this._primaryView,
+					secondaryView: !!this._secondaryView
+				});
 				this._primaryView?.setLightTheme(this._state.lightTheme);
 				this._secondaryView?.setLightTheme(this._state.lightTheme);
 			}
 		}
 
-		if (init || this._state.darkTheme !== previousState.darkTheme) {
+		// Compare by theme ID to detect changes even if object reference is the same
+		let darkThemeChanged = init || 
+			(this._state.darkTheme?.id !== previousState.darkTheme?.id) ||
+			(this._state.darkTheme !== previousState.darkTheme);
+		if (darkThemeChanged) {
 			if (!init) {
+				debugLog('[Reader._updateState] Dark theme changed:', {
+					previous: previousState.darkTheme?.id,
+					current: this._state.darkTheme?.id,
+					primaryView: !!this._primaryView,
+					secondaryView: !!this._secondaryView
+				});
 				this._primaryView?.setDarkTheme(this._state.darkTheme);
 				this._secondaryView?.setDarkTheme(this._state.darkTheme);
 			}
@@ -681,16 +787,31 @@ class Reader {
 	}
 
 	setTool(params) {
+		debugLog('[Reader.setTool] Called with params:', params);
 		if (this._state.readOnly && !['pointer', 'hand'].includes(params.type)) {
+			debugLog('[Reader.setTool] Read-only mode, ignoring tool change');
 			return;
 		}
 		let tool = this._state.tool;
 		if (params.type && tool.type !== params.type) {
 			tool = this._tools[params.type];
 		}
+		// Create a new tool object to ensure reference changes, so _updateState detects the change
+		// This is important when only color or other properties change (not the type)
+		// Match PDF behavior: always create a new object reference
+		tool = { ...tool };
 		for (let key in params) {
 			tool[key] = params[key];
 		}
+		// Update the corresponding tool in _tools to persist color changes
+		// This ensures that when switching tools and back, the color is maintained
+		if (this._tools[tool.type] && !['pointer', 'hand'].includes(tool.type)) {
+			this._tools[tool.type] = { ...this._tools[tool.type] };
+			for (let key in params) {
+				this._tools[tool.type][key] = params[key];
+			}
+		}
+		debugLog('[Reader.setTool] Final tool object:', tool);
 		this._updateState({ tool });
 		if (!['pointer', 'hand'].includes(tool.type)) {
 			this.setSelectedAnnotations([]);
@@ -761,6 +882,7 @@ class Reader {
 	}
 
 	openContextMenu(params) {
+		debugLog('[Reader.openContextMenu] Called with params:', params);
 		this._onBringReaderToFront?.(true);
 		this._updateState({ contextMenu: params });
 		setTimeout(() => {
@@ -1619,17 +1741,23 @@ class Reader {
 	}
 
 	setLightTheme(themeName) {
+		debugLog('[Reader.setLightTheme] Called with themeName:', themeName);
 		let themes = [...DEFAULT_THEMES, ...(this._state.customThemes || [])];
 		themes = new Map(themes.map(theme => [theme.id, theme]));
 		let lightTheme = themes.get(themeName) || null;
-		this._updateState({ lightTheme });
+		debugLog('[Reader.setLightTheme] Resolved theme:', lightTheme?.id, lightTheme);
+		// Clear dark theme when setting light theme to ensure only one theme slot is active
+		this._updateState({ lightTheme, darkTheme: null });
 	}
 
 	setDarkTheme(themeName) {
+		debugLog('[Reader.setDarkTheme] Called with themeName:', themeName);
 		let themes = [...DEFAULT_THEMES, ...(this._state.customThemes || [])];
 		themes = new Map(themes.map(theme => [theme.id, theme]));
 		let darkTheme = themes.get(themeName) || null;
-		this._updateState({ darkTheme });
+		debugLog('[Reader.setDarkTheme] Resolved theme:', darkTheme?.id, darkTheme);
+		// Clear light theme when setting dark theme to ensure only one theme slot is active
+		this._updateState({ darkTheme, lightTheme: null });
 	}
 
 	toggleSidebar(open) {

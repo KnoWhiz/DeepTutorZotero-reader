@@ -1748,12 +1748,42 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	}
 
 	setLightTheme(theme: Theme | null) {
+		function debugLog(...args: any[]) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && (window as any).parent && (window as any).parent !== window) {
+					if ((window as any).parent.Zotero && (window as any).parent.Zotero.debug) {
+						(window as any).parent.Zotero.debug('[DOMView] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		debugLog('[DOMView.setLightTheme] Called:', theme?.id, theme);
 		this._lightTheme = theme;
+		// Update color scheme to "light" when a light theme is set, so _updateColorScheme applies it
+		if (theme) {
+			this._colorScheme = 'light';
+		}
 		this._updateColorScheme();
 	}
 
 	setDarkTheme(theme: Theme | null) {
+		function debugLog(...args: any[]) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && (window as any).parent && (window as any).parent !== window) {
+					if ((window as any).parent.Zotero && (window as any).parent.Zotero.debug) {
+						(window as any).parent.Zotero.debug('[DOMView] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		debugLog('[DOMView.setDarkTheme] Called:', theme?.id, theme);
 		this._darkTheme = theme;
+		// Update color scheme to "dark" when a dark theme is set, so _updateColorScheme applies it
+		if (theme) {
+			this._colorScheme = 'dark';
+		}
 		this._updateColorScheme();
 	}
 
