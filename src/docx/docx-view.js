@@ -1386,6 +1386,20 @@ class DOCXView extends DOMView {
 		});
 		
 		// Render using parent's rendering logic
+		// Ensure onTextChange is always a function (inherit from parent or provide fallback)
+		const onTextChangeProp = typeof this._handleTextAnnotationChange === 'function' 
+			? this._handleTextAnnotationChange 
+			: ((id, text) => {
+				console.error('[DOCXView._renderAnnotations] _handleTextAnnotationChange is not a function, text changes will not be saved', {
+					hasMethod: '_handleTextAnnotationChange' in this,
+					type: typeof this._handleTextAnnotationChange
+				});
+			});
+		debugLog('[DOCXView._renderAnnotations] onTextChangeProp:', {
+			isFunction: typeof onTextChangeProp === 'function',
+			hasHandleTextAnnotationChange: '_handleTextAnnotationChange' in this,
+			handleTextAnnotationChangeType: typeof this._handleTextAnnotationChange
+		});
 		let doRender = () => this._annotationRenderRoot.render(
 			React.createElement(AnnotationOverlay, {
 				iframe: this._iframe,
@@ -1396,7 +1410,8 @@ class DOCXView extends DOMView {
 				onContextMenu: this._handleAnnotationContextMenu,
 				onDragStart: this._handleAnnotationDragStart,
 				onResizeStart: this._handleAnnotationResizeStart,
-				onResizeEnd: this._handleAnnotationResizeEnd
+				onResizeEnd: this._handleAnnotationResizeEnd,
+				onTextChange: onTextChangeProp
 			})
 		);
 		
