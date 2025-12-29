@@ -8,9 +8,14 @@ window.createReader = (options) => {
 	options.platform = 'zotero';
 
 	let { onOpenContextMenu } = options;
+	let reader;
 	options.onOpenContextMenu = (params) => {
 		if (params.internal) {
-			reader.openContextMenu(params);
+			// Use reader if available, otherwise fall back to window._reader
+			const readerInstance = reader || window._reader;
+			if (readerInstance) {
+				readerInstance.openContextMenu(params);
+			}
 			return;
 		}
 		window.contextMenuParams = params;
@@ -26,7 +31,7 @@ window.createReader = (options) => {
 		});
 	};
 
-	let reader = new Reader(options);
+	reader = new Reader(options);
 	window._reader = reader;
 	return reader;
 };

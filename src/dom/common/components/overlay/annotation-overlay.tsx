@@ -16,7 +16,8 @@ import {
 	supportsCaretPositionFromPoint
 } from "../../lib/range";
 import { AnnotationType } from "../../../../common/types";
-import ReactDOM from "react-dom";
+// @ts-ignore - react-dom types issue
+import * as ReactDOM from "react-dom";
 import { IconNoteLarge } from "../../../../common/components/common/icons";
 import { closestElement, isRTL, isVertical } from "../../lib/nodes";
 import { isSafari } from "../../../../common/lib/utilities";
@@ -252,15 +253,13 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 							hasTextChangeHandler: !!textChangeHandler
 						});
 					});
-				console.log('[AnnotationOverlay] Passing onTextChange to TextAnnotation:', {
+				console.log('[AnnotationOverlay] Rendering TextAnnotation:', {
 					annotationId: annotation.id,
-					hasOnTextChange: !!onTextChange,
-					hasOnTextChangeRef: !!onTextChangeRef.current,
-					hasTextChangeHandler: !!textChangeHandler,
-					hasSafeTextChangeHandler: !!safeTextChangeHandler,
-					onTextChangeType: typeof onTextChange,
-					textChangeHandlerType: typeof textChangeHandler,
-					safeTextChangeHandlerType: typeof safeTextChangeHandler
+					pointerEventsSuppressed: pointerEventsSuppressed,
+					isResizing: isResizing,
+					isPointerDownOutside: isPointerDownOutside,
+					isAltDown: isAltDown,
+					hasOnPointerDown: !!handlePointerDown
 				});
 				return (
 					<TextAnnotation
@@ -352,6 +351,7 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 	// Use local state to store the current value and prevent cursor position resets
 	// This matches PDF's approach of only updating the DOM value when it differs
 	const [localValue, setLocalValue] = useState<string>(annotation.comment || '');
+	const [isHovered, setIsHovered] = useState(false);
 	const [dynamicDimensions, setDynamicDimensions] = useState<{ width: number; height: number } | null>(null);
 	const lastPropValueRef = useRef<string>(annotation.comment || '');
 	const lastAnnotationIdRef = useRef<string | undefined>(annotation.id);
@@ -439,6 +439,86 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 		}
 	}, [annotation.id, annotation.readOnly]);
 	
+	// Add native event listeners to debug if events are reaching the textarea at all
+	useEffect(() => {
+		const textarea = textareaRef.current;
+		if (!textarea) return;
+		
+		// Get the iframe window and document
+		const iframeWindow = iframe.contentWindow;
+		const iframeDocument = iframe.contentDocument;
+		if (!iframeWindow || !iframeDocument) return;
+		
+		const handleNativeClick = (e: MouseEvent) => {
+			console.log('[TextAnnotation] ===== NATIVE CLICK EVENT ON TEXTAREA =====', {
+				annotationId: annotation.id,
+				target: e.target,
+				currentTarget: e.currentTarget,
+				type: e.type
+			});
+		};
+		
+		const handleNativePointerDown = (e: PointerEvent) => {
+			console.log('[TextAnnotation] ===== NATIVE POINTER DOWN ON TEXTAREA =====', {
+				annotationId: annotation.id,
+				target: e.target,
+				currentTarget: e.currentTarget,
+				type: e.type,
+				pointerType: e.pointerType,
+				button: e.button
+			});
+		};
+		
+		// Handle Delete/Backspace in capture phase to prevent parent from deleting annotation
+		// when textarea is focused (has active cursor)
+		// Listen on both textarea and iframe window to catch events early
+		const handleNativeKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Delete' || e.key === 'Backspace') {
+				// Check if textarea is focused (has active cursor)
+				// Use iframe document's activeElement to check focus
+				const isFocused = iframeDocument.activeElement === textarea 
+					|| e.target === textarea 
+					|| (e.target instanceof Element && e.target.closest('textarea') === textarea);
+				
+				console.log('[TextAnnotation.handleNativeKeyDown] Delete/Backspace pressed:', {
+					annotationId: annotation.id,
+					key: e.key,
+					isFocused: isFocused,
+					activeElement: iframeDocument.activeElement instanceof Element ? iframeDocument.activeElement.tagName : 'not Element',
+					eventTarget: e.target instanceof Element ? e.target.tagName : 'not Element',
+					textareaRef: !!textarea
+				});
+				
+				if (isFocused) {
+					// Textarea has focus - stop immediate propagation to prevent ALL other handlers (including keyboard manager)
+					// Allow normal delete/backspace behavior in the textarea
+					console.log('[TextAnnotation.handleNativeKeyDown] Textarea is focused - stopping immediate propagation, allowing normal delete');
+					e.stopImmediatePropagation();
+					e.stopPropagation();
+				} else {
+					// If not focused, don't stop propagation - let parent handle deletion
+					console.log('[TextAnnotation.handleNativeKeyDown] Textarea is NOT focused - allowing propagation for annotation deletion');
+				}
+			}
+		};
+		
+		textarea.addEventListener('click', handleNativeClick, true);
+		textarea.addEventListener('pointerdown', handleNativePointerDown, true);
+		// Use capture phase (true) to intercept before parent handler runs
+		textarea.addEventListener('keydown', handleNativeKeyDown, true);
+		
+		// Also listen on iframe window in capture phase to catch events even earlier
+		// This ensures we intercept before DOMView's _handleKeyDown runs
+		iframeWindow.addEventListener('keydown', handleNativeKeyDown, true);
+		
+		return () => {
+			textarea.removeEventListener('click', handleNativeClick, true);
+			textarea.removeEventListener('pointerdown', handleNativePointerDown, true);
+			textarea.removeEventListener('keydown', handleNativeKeyDown, true);
+			iframeWindow.removeEventListener('keydown', handleNativeKeyDown, true);
+		};
+	}, [annotation.id, textareaRef.current, iframe]);
+	
 	const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
 		const newValue = event.target.value;
 		const oldValue = localValue;
@@ -513,6 +593,8 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 			event.preventDefault();
 			event.currentTarget.blur();
 		}
+		// Delete/Backspace handling is done in native capture-phase listener
+		// to prevent parent from deleting annotation when textarea is focused
 		// Enter key should insert a newline (default behavior)
 		// No need to prevent default or stop propagation
 	};
@@ -544,26 +626,6 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 		}
 	};
 	
-	// Handle click on the annotation group to focus textarea for editing
-	const handleGroupClick = (event: React.PointerEvent) => {
-		// Focus textarea when clicking anywhere on the annotation group
-		// (but not if clicking directly on the textarea itself - it handles its own focus)
-		const target = event.target as Element;
-		const isTextarea = target.tagName === 'TEXTAREA' || target.closest('textarea');
-		
-		// If clicking on the group, foreignObject, or anywhere except the textarea itself
-		if (!isTextarea && textareaRef.current && !annotation.readOnly) {
-			// Only prevent default if we're actually going to focus
-			// This allows the textarea's own click handler to work
-			if (event.target === event.currentTarget || target.tagName === 'foreignObject') {
-				event.preventDefault();
-			}
-			textareaRef.current.focus();
-			// Move cursor to end
-			const len = textareaRef.current.value.length;
-			textareaRef.current.setSelectionRange(len, len);
-		}
-	};
 	
 	// Calculate dimensions - use dynamic if set, otherwise use pageRect
 	const fontSize = positionData.fontSize || 16;
@@ -603,7 +665,18 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 			textarea.style.height = measuredHeight + 'px';
 			
 			// Update foreignObject if it exists
+			// Account for border width (2px or 3px) and padding (4px top/bottom, 6px left/right)
+			// Since we're using border-box, the textarea width includes border, but foreignObject needs to match
+			const borderWidth = selected ? 3 : 2; // Will be updated on hover, but use current state
+			const paddingHorizontal = 6 * 2; // 6px left + 6px right
+			const paddingVertical = 4 * 2; // 4px top + 4px bottom
+			const borderTotal = borderWidth * 2; // left + right borders
+			const borderTotalVertical = borderWidth * 2; // top + bottom borders
+			
+			// foreignObject width should match the total width including borders
+			// Since textarea uses border-box, measuredWidth already includes border, but we need to ensure foreignObject is sized correctly
 			if (foreignObjectRef.current) {
+				// Set foreignObject to accommodate the full textarea including borders
 				foreignObjectRef.current.setAttribute('width', String(measuredWidth));
 				foreignObjectRef.current.setAttribute('height', String(measuredHeight));
 			}
@@ -613,25 +686,26 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 		}
 	}, [localValue, annotation.id, fontSize, minWidth, minHeight, pageRect.width, pageRect.height]); // Recalculate when text or annotation changes
 	
+	console.log('[TextAnnotation] Rendering text annotation, checking pointer events:', {
+		annotationId: annotation.id,
+		readOnly: annotation.readOnly,
+		hasTextareaRef: !!textareaRef.current,
+		textareaValue: textareaRef.current?.value
+	});
+	
 	return (
 		<g
 			data-annotation-id={annotation.id}
+			style={{ pointerEvents: 'auto' }}
 			onPointerDown={(event) => {
-				// If clicking to edit (not on textarea itself), focus the textarea
-				// and prevent annotation selection
+				// Only handle clicks on the border (wrapper div), not on textarea
+				// Clicks inside textarea will naturally focus it
 				const target = event.target as Element;
 				const isTextarea = target.tagName === 'TEXTAREA' || target.closest('textarea');
 				
-				if (!isTextarea && textareaRef.current && !annotation.readOnly) {
-					// Focus the textarea for editing
-					handleGroupClick(event);
-					// Don't trigger annotation selection when clicking to edit
-					event.stopPropagation();
-					return;
-				}
-				
-				// For other cases (like textarea click or selection), allow normal behavior
-				if (onPointerDown) {
+				// If clicking on border (wrapper div), select annotation
+				// If clicking inside textarea, let it focus naturally
+				if (!isTextarea && onPointerDown) {
 					onPointerDown(annotation, event);
 				}
 			}}
@@ -644,7 +718,39 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 				y={pageRect.y}
 				width={displayWidth}
 				height={displayHeight}
+				style={{ pointerEvents: 'auto', overflow: 'visible' }}
 			>
+				<div
+					onMouseEnter={() => setIsHovered(true)}
+					onMouseLeave={() => setIsHovered(false)}
+					onPointerDown={(e: React.PointerEvent) => {
+						// Clicking on border (wrapper div) - select annotation, don't focus textarea
+						e.stopPropagation();
+						if (onPointerDown) {
+							onPointerDown(annotation, e);
+						}
+					}}
+					style={{
+						width: '100%',
+						height: '100%',
+						// Border on the wrapper div to ensure all sides are visible
+						border: selected 
+							? '3px solid #6d95e0' 
+							: isHovered 
+								? '3px solid rgba(0, 0, 0, 0.5)' 
+								: '2px solid rgba(0, 0, 0, 0.3)',
+						background: 'rgba(255, 255, 255, 0.95)',
+						boxShadow: selected 
+							? '0 2px 4px rgba(109, 149, 224, 0.3)' 
+							: isHovered
+								? '0 2px 4px rgba(0, 0, 0, 0.2)'
+								: '0 1px 2px rgba(0, 0, 0, 0.1)',
+						boxSizing: 'border-box',
+						transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+						padding: 0,
+						margin: 0
+					}}
+				>
 				<textarea
 					ref={textareaRef}
 					value={localValue}
@@ -652,23 +758,24 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 					onKeyDown={handleKeyDown}
 					onFocus={handleFocus}
 					onBlur={handleBlur}
-					onClick={(e) => {
-						// Ensure textarea gets focus when clicked directly
+					onPointerDown={(e) => {
+						// Clicking inside textarea - allow normal focus behavior
+						// Stop propagation so border click handler doesn't interfere
 						e.stopPropagation();
-						if (!annotation.readOnly) {
-							textareaRef.current?.focus();
-						}
 					}}
 					style={{
 						width: '100%',
 						minWidth: `${minWidth}px`,
-						height: 'auto',
+						height: '100%',
 						minHeight: `${minHeight}px`,
-						border: selected ? '2px solid #6d95e0' : '1px solid rgba(0,0,0,0.2)',
-						padding: '2px',
+						// No border on textarea - border is on wrapper div
+						border: 'none',
+						// Increased padding for larger clickable area
+						padding: '4px 6px',
 						fontSize: `${fontSize}px`,
 						fontFamily: 'inherit',
 						color: annotation.color || '#000000',
+						// Transparent background - parent div has the background
 						background: 'transparent',
 						resize: 'none',
 						overflow: 'hidden',
@@ -677,12 +784,14 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 						wordWrap: 'break-word',
 						outline: 'none',
 						cursor: 'text',
-						boxSizing: 'border-box'
+						boxSizing: 'border-box',
+						margin: 0
 					}}
 					placeholder="Text annotation"
 					disabled={annotation.readOnly}
 					dir="auto"
 				/>
+				</div>
 			</foreignObject>
 		</g>
 	);

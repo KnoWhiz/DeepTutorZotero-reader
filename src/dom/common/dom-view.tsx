@@ -1553,6 +1553,26 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	}
 
 	protected _handlePointerDown(event: PointerEvent) {
+		// Check if clicking on a text annotation textarea - if so, let it handle the event
+		const target = event.target as Element;
+		const isTextAnnotationTextarea = target.tagName === 'TEXTAREA' 
+			|| target.closest('textarea')
+			|| target.closest('[data-annotation-id]')?.querySelector('textarea');
+		
+		console.log('[DOMView._handlePointerDown] Pointer down captured:', {
+			targetTagName: target.tagName,
+			targetNodeName: target.nodeName,
+			isTextAnnotationTextarea: !!isTextAnnotationTextarea,
+			isInAnnotationShadowRoot: this._annotationShadowRoot?.contains(target),
+			toolType: this._tool?.type
+		});
+		
+		// If clicking on a text annotation textarea, don't interfere - let React handle it
+		if (isTextAnnotationTextarea && this._annotationShadowRoot?.contains(target)) {
+			console.log('[DOMView._handlePointerDown] Text annotation textarea clicked - allowing event to propagate');
+			return; // Don't process, let React handlers receive the event
+		}
+		
 		if ((event.buttons & 1) === 1 && event.isPrimary) {
 			this._gotPointerUp = false;
 			this._pointerMovedWhileDown = false;

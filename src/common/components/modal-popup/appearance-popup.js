@@ -173,7 +173,19 @@ function Theme({ theme, active, onSet, onOpenContextMenu }) {
 	const isReadOnly = DEFAULT_THEMES.some(t => t.id === theme.id);
 	const { platform } = useContext(ReaderContext);
 
+	function debugLog(...args) {
+		console.log(...args);
+		try {
+			if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+				if (window.parent.Zotero && window.parent.Zotero.debug) {
+					window.parent.Zotero.debug('[AppearancePopup] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+				}
+			}
+		} catch (e) {}
+	}
+
 	function handleClick(e) {
+		debugLog('[AppearancePopup.Theme] Theme clicked:', theme.id, theme);
 		onSet(theme.id);
 	}
 
@@ -411,7 +423,20 @@ function AppearancePopup(props) {
 								className={cx('theme original', { active: !currentTheme })}
 								style={{ backgroundColor: '#ffffff', color: '#000000' }}
 								title={l10n.getString('reader-theme-original')}
-								onClick={() => props.onChangeTheme()}
+								onClick={() => {
+									function debugLog(...args) {
+										console.log(...args);
+										try {
+											if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+												if (window.parent.Zotero && window.parent.Zotero.debug) {
+													window.parent.Zotero.debug('[AppearancePopup] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+												}
+											}
+										} catch (e) {}
+									}
+									debugLog('[AppearancePopup] Original theme clicked');
+									props.onChangeTheme();
+								}}
 							>{l10n.getString('reader-theme-original')}</button>
 							{themes.map((theme, i) => (
 								<Theme

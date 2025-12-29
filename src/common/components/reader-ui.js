@@ -58,12 +58,48 @@ function View(props) {
 					onChangeTextSelectionAnnotationMode={props.onChangeTextSelectionAnnotationMode}
 				/>
 			}
-			{state[name + 'ViewAnnotationPopup']
-				&& (
-					(!state.sidebarOpen || state.sidebarView !== 'annotations')
-					&& state.annotations.find(x => x.id === state[name + 'ViewAnnotationPopup'].annotation.id)
-				)
-				&& <AnnotationPopup
+			{(() => {
+				const hasPopup = !!state[name + 'ViewAnnotationPopup'];
+				const sidebarCondition = !state.sidebarOpen || state.sidebarView !== 'annotations';
+				const annotationInState = hasPopup ? state.annotations.find(x => x.id === state[name + 'ViewAnnotationPopup'].annotation.id) : null;
+				const shouldShow = hasPopup && sidebarCondition && annotationInState;
+				
+				if (hasPopup) {
+					console.log(`[ReaderUI] Annotation popup check for ${name}:`, {
+						hasPopup,
+						sidebarOpen: state.sidebarOpen,
+						sidebarView: state.sidebarView,
+						sidebarCondition,
+						annotationId: state[name + 'ViewAnnotationPopup'].annotation.id,
+						annotationInState: !!annotationInState,
+						annotationsCount: state.annotations.length,
+						shouldShow: !!shouldShow, // Explicitly convert to boolean for logging
+						shouldShowType: typeof shouldShow
+					});
+					try {
+						if (window.parent && window.parent.Zotero && window.parent.Zotero.debug) {
+							window.parent.Zotero.debug(`[ReaderUI] Annotation popup check for ${name}: hasPopup=${hasPopup}, sidebarCondition=${sidebarCondition}, annotationInState=${!!annotationInState}, shouldShow=${!!shouldShow}`);
+						}
+					} catch (e) {}
+				}
+				
+				if (shouldShow) {
+					console.log(`[ReaderUI] Rendering AnnotationPopup for ${name}, annotation:`, state[name + 'ViewAnnotationPopup'].annotation);
+					try {
+						if (window.parent && window.parent.Zotero && window.parent.Zotero.debug) {
+							window.parent.Zotero.debug(`[ReaderUI] Rendering AnnotationPopup for ${name}, annotation ID: ${state[name + 'ViewAnnotationPopup'].annotation.id}, type: ${state[name + 'ViewAnnotationPopup'].annotation.type}`);
+						}
+					} catch (e) {}
+				} else if (hasPopup) {
+					console.log(`[ReaderUI] NOT rendering AnnotationPopup for ${name} - shouldShow is false`);
+					try {
+						if (window.parent && window.parent.Zotero && window.parent.Zotero.debug) {
+							window.parent.Zotero.debug(`[ReaderUI] NOT rendering AnnotationPopup for ${name} - shouldShow is false`);
+						}
+					} catch (e) {}
+				}
+				
+				return shouldShow && <AnnotationPopup
 					type={props.type}
 					readOnly={state.readOnly}
 					params={state[name + 'ViewAnnotationPopup']}
@@ -74,7 +110,8 @@ function View(props) {
 					onOpenPageLabelPopup={props.onOpenPageLabelPopup}
 					onOpenAnnotationContextMenu={props.onOpenAnnotationContextMenu}
 					onSetDataTransferAnnotations={props.onSetDataTransferAnnotations}
-				/>}
+				/>;
+			})()}
 			{state[name + 'ViewOverlayPopup'] &&
 				<OverlayPopup
 					params={state[name + 'ViewOverlayPopup']}

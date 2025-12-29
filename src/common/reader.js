@@ -1155,6 +1155,13 @@ class Reader {
 		};
 
 		let onSetAnnotationPopup = (annotationPopup) => {
+			debugLog('[Reader.onSetAnnotationPopup] Called:', {
+				primary,
+				hasAnnotation: !!annotationPopup,
+				annotationId: annotationPopup?.annotation?.id,
+				annotationType: annotationPopup?.annotation?.type,
+				hasRect: !!annotationPopup?.rect
+			});
 			this._updateState({ [primary ? 'primaryViewAnnotationPopup' : 'secondaryViewAnnotationPopup']: annotationPopup });
 		};
 
