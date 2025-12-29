@@ -240,16 +240,16 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 				<NotePreview annotation={annotation} key={annotation.key} />
 			))}
 			{textAnnotations.map(annotation => {
-				// Use ref to get the latest onTextChange, with fallback to prop
+					// Use ref to get the latest onTextChange, with fallback to prop
 				// Ensure we always pass a function (even if it's a no-op) to avoid undefined issues
-				const textChangeHandler = onTextChangeRef.current || onTextChange;
+					const textChangeHandler = onTextChangeRef.current || onTextChange;
 				const safeTextChangeHandler = typeof textChangeHandler === 'function' 
 					? textChangeHandler 
 					: ((id: string, text: string) => {
 						console.warn('[AnnotationOverlay] onTextChange is not a function, text changes will not be saved', {
 							annotationId: id,
-							hasOnTextChange: !!onTextChange,
-							hasOnTextChangeRef: !!onTextChangeRef.current,
+						hasOnTextChange: !!onTextChange,
+						hasOnTextChangeRef: !!onTextChangeRef.current,
 							hasTextChangeHandler: !!textChangeHandler
 						});
 					});
@@ -260,19 +260,19 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 					isPointerDownOutside: isPointerDownOutside,
 					isAltDown: isAltDown,
 					hasOnPointerDown: !!handlePointerDown
-				});
-				return (
-					<TextAnnotation
-						annotation={annotation}
-						key={annotation.key}
-						iframe={iframe}
-						selected={annotation.id ? selectedAnnotationIDs.includes(annotation.id) : false}
-						onPointerDown={annotation.id ? handlePointerDown : undefined}
-						onPointerUp={annotation.id ? handlePointerUp : undefined}
-						onContextMenu={annotation.id ? handleContextMenu : undefined}
+					});
+					return (
+						<TextAnnotation
+							annotation={annotation}
+							key={annotation.key}
+							iframe={iframe}
+							selected={annotation.id ? selectedAnnotationIDs.includes(annotation.id) : false}
+							onPointerDown={annotation.id ? handlePointerDown : undefined}
+							onPointerUp={annotation.id ? handlePointerUp : undefined}
+							onContextMenu={annotation.id ? handleContextMenu : undefined}
 						onTextChange={safeTextChangeHandler}
-					/>
-				);
+						/>
+					);
 			})}
 			{imageAnnotations.map(annotation => (
 				<ImageAnnotation
@@ -339,8 +339,8 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 	React.useEffect(() => {
 		onTextChangeRef.current = onTextChange;
 		console.log('[TextAnnotation] onTextChange ref updated in useEffect:', {
-			annotationId: annotation.id,
-			hasOnTextChange: !!onTextChange,
+		annotationId: annotation.id,
+		hasOnTextChange: !!onTextChange,
 			hasRefCurrent: !!onTextChangeRef.current
 		});
 	}, [onTextChange, annotation.id]);
@@ -410,8 +410,8 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 		if (!isFocused) {
 			// Only sync when not focused - this allows external updates to come through
 			if (propValue !== localValue) {
-				lastPropValueRef.current = propValue;
-				setLocalValue(propValue);
+			lastPropValueRef.current = propValue;
+			setLocalValue(propValue);
 			}
 		} else {
 			// When focused, only update if the prop value is different AND we didn't just set it
@@ -495,7 +495,7 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 					console.log('[TextAnnotation.handleNativeKeyDown] Textarea is focused - stopping immediate propagation, allowing normal delete');
 					e.stopImmediatePropagation();
 					e.stopPropagation();
-				} else {
+		} else {
 					// If not focused, don't stop propagation - let parent handle deletion
 					console.log('[TextAnnotation.handleNativeKeyDown] Textarea is NOT focused - allowing propagation for annotation deletion');
 				}
@@ -750,7 +750,7 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 						padding: 0,
 						margin: 0
 					}}
-				>
+			>
 				<textarea
 					ref={textareaRef}
 					value={localValue}
@@ -890,10 +890,22 @@ let InkAnnotation: React.FC<InkAnnotationProps> = (props) => {
 	return (
 		<g
 			data-annotation-id={annotation.id}
+			style={{ pointerEvents: 'auto' }}
 			onPointerDown={onPointerDown && (event => onPointerDown!(annotation, event))}
 			onPointerUp={onPointerUp && (event => onPointerUp!(annotation, event))}
 			onContextMenu={onContextMenu && (event => onContextMenu!(annotation, event))}
 		>
+			{/* Invisible thicker stroke for easier clicking */}
+			<path
+				d={pathData}
+				fill="none"
+				stroke="transparent"
+				strokeWidth={Math.max(width * 3, 8)}
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				pointerEvents="stroke"
+			/>
+			{/* Visible stroke */}
 			<path
 				d={pathData}
 				fill="none"
@@ -902,6 +914,7 @@ let InkAnnotation: React.FC<InkAnnotationProps> = (props) => {
 				strokeLinecap="round"
 				strokeLinejoin="round"
 				opacity={selected ? 1 : 0.8}
+				pointerEvents="none"
 			/>
 		</g>
 	);
