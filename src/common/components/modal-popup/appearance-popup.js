@@ -267,7 +267,21 @@ function AppearancePopup(props) {
 	themes = Array.from(new Map(themes.map(theme => [theme.id, theme])).values());
 
 	let currentColorScheme = getCurrentColorScheme(props.colorScheme);
-	let currentTheme = currentColorScheme === 'light' ? props.lightTheme : props.darkTheme;
+	// Determine active theme: check which theme slot is actually set
+	// If both are set, prefer the one matching current color scheme
+	// This ensures that when a dark theme is selected, it shows as active even if colorScheme is 'light'
+	let currentTheme = null;
+	if (props.darkTheme && props.lightTheme) {
+		// Both themes are set - use the one matching current color scheme
+		currentTheme = currentColorScheme === 'light' ? props.lightTheme : props.darkTheme;
+	} else if (props.darkTheme) {
+		// Only dark theme is set - use it (fixes bug where dark theme selection doesn't show as active)
+		currentTheme = props.darkTheme;
+	} else if (props.lightTheme) {
+		// Only light theme is set - use it
+		currentTheme = props.lightTheme;
+	}
+	// If neither is set, currentTheme remains null, which will make "Original" button active
 
 	return (
 		<div ref={overlayRef} className="toolbar-popup-overlay overlay" onPointerDown={handlePointerDown}>

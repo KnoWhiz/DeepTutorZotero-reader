@@ -836,10 +836,23 @@ let ImageAnnotation: React.FC<ImageAnnotationProps> = (props) => {
 	return (
 		<g
 			data-annotation-id={annotation.id}
+			style={{ pointerEvents: 'auto' }}
 			onPointerDown={onPointerDown && (event => onPointerDown!(annotation, event))}
 			onPointerUp={onPointerUp && (event => onPointerUp!(annotation, event))}
 			onContextMenu={onContextMenu && (event => onContextMenu!(annotation, event))}
 		>
+			{/* Invisible thicker transparent stroke for easier clicking on border */}
+			<rect
+				x={pageRect.x}
+				y={pageRect.y}
+				width={pageRect.width}
+				height={pageRect.height}
+				fill="none"
+				stroke="transparent"
+				strokeWidth={Math.max(selected ? 8 : 6, 6)}
+				pointerEvents="stroke"
+			/>
+			{/* Visible stroke */}
 			<rect
 				x={pageRect.x}
 				y={pageRect.y}
@@ -848,8 +861,8 @@ let ImageAnnotation: React.FC<ImageAnnotationProps> = (props) => {
 				fill="none"
 				stroke={annotation.color || '#000000'}
 				strokeWidth={selected ? 3 : 2}
-				strokeDasharray={selected ? undefined : "5,5"}
 				opacity={selected ? 1 : 0.7}
+				pointerEvents="none"
 			/>
 		</g>
 	);
