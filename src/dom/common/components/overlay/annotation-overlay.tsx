@@ -142,6 +142,14 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 	}, [onPointerUp]);
 
 	let handleContextMenu = useCallback((annotation: DisplayedAnnotation, event: React.MouseEvent) => {
+		console.log('[AnnotationOverlay.handleContextMenu] React contextmenu event on annotation:', {
+			annotationId: annotation.id,
+			annotationType: annotation.type,
+			clientX: event.clientX,
+			clientY: event.clientY,
+			target: event.target,
+			hasOnContextMenu: !!onContextMenu,
+		});
 		onContextMenu(annotation.id!, event);
 	}, [onContextMenu]);
 

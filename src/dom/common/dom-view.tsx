@@ -1288,7 +1288,47 @@ abstract class DOMView<State extends DOMViewState, Data> {
 		if (this._options.platform === 'web') {
 			return;
 		}
-		// Prevent native context menu
+		
+		console.log('[DOMView._handleContextMenu] Native contextmenu event:', {
+			target: event.target,
+			targetTagName: (event.target as Element)?.tagName,
+			clientX: event.clientX,
+			clientY: event.clientY,
+			hasAnnotationShadowRoot: !!this._annotationShadowRoot,
+		});
+		
+		// Check if the click is on an annotation FIRST
+		// If it is, let React's onContextMenu handlers handle it (they call preventDefault)
+		// If it's not, we handle it here
+		let target = event.target as Element;
+		let isOnAnnotation = false;
+		
+		if (target && this._annotationShadowRoot.contains(target)) {
+			// Target is in annotation shadow root - React handlers will handle it
+			console.log('[DOMView._handleContextMenu] Target is in annotation shadow root');
+			isOnAnnotation = true;
+		}
+		else {
+			// Check via elementsFromPoint as fallback
+			console.log('[DOMView._handleContextMenu] Checking elementsFromPoint...');
+			let annotationIDs = this._getAnnotationsAtPoint(event.clientX, event.clientY);
+			console.log('[DOMView._handleContextMenu] elementsFromPoint found annotationIDs:', annotationIDs);
+			if (annotationIDs.length > 0) {
+				isOnAnnotation = true;
+			}
+		}
+		
+		console.log('[DOMView._handleContextMenu] isOnAnnotation:', isOnAnnotation);
+		
+		if (isOnAnnotation) {
+			// Let React's onContextMenu handlers handle annotation context menus
+			// They will call preventDefault() to prevent the browser menu
+			console.log('[DOMView._handleContextMenu] Returning early - letting React handlers handle annotation context menu');
+			return;
+		}
+		
+		// Not on an annotation - handle view context menu
+		console.log('[DOMView._handleContextMenu] Not on annotation - opening view context menu');
 		event.preventDefault();
 		let br = this._iframe.getBoundingClientRect();
 		let overlay = this._getContextMenuOverlay(event.target as Element);
@@ -1320,7 +1360,15 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	}
 
 	private _handleAnnotationContextMenu = (id: string, event: React.MouseEvent) => {
+		console.log('[DOMView._handleAnnotationContextMenu] React onContextMenu handler called:', {
+			id,
+			clientX: event.clientX,
+			clientY: event.clientY,
+			target: event.target,
+		});
+		
 		if (this._selectionContainsPoint(event.clientX, event.clientY)) {
+			console.log('[DOMView._handleAnnotationContextMenu] Selection contains point, returning');
 			return;
 		}
 
@@ -1329,6 +1377,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 
 		let br = this._iframe.getBoundingClientRect();
 		if (this._selectedAnnotationIDs.includes(id)) {
+			console.log('[DOMView._handleAnnotationContextMenu] Annotation is selected, opening context menu for selected annotations:', this._selectedAnnotationIDs);
 			this._options.onOpenAnnotationContextMenu({
 				ids: this._selectedAnnotationIDs,
 				x: br.x + event.clientX * this._iframeCoordScaleFactor,
@@ -1337,6 +1386,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 			});
 		}
 		else {
+			console.log('[DOMView._handleAnnotationContextMenu] Annotation not selected, selecting and opening context menu');
 			this._options.onSelectAnnotations([id], event.nativeEvent);
 			this._options.onOpenAnnotationContextMenu({
 				ids: [id],
@@ -1520,10 +1570,10 @@ abstract class DOMView<State extends DOMViewState, Data> {
 			onUpdateAnnotationsType: typeof this._options.onUpdateAnnotations
 		});
 		if (this._options.onUpdateAnnotations) {
-			this._options.onUpdateAnnotations([{ id, comment: text }]);
+		this._options.onUpdateAnnotations([{ id, comment: text }]);
 		} else {
 			console.error('[DOMView._handleTextAnnotationChange] onUpdateAnnotations is not available!');
-		}
+					}
 	};
 
 

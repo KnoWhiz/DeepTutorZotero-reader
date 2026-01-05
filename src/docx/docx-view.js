@@ -811,6 +811,15 @@ class DOCXView extends DOMView {
 		// Handle text/image/ink tools
 		if ((event.buttons & 1) === 1 && event.isPrimary) {
 			if (this._tool.type === 'text' || this._tool.type === 'image' || this._tool.type === 'ink') {
+				// Check if we're clicking on an existing annotation
+				// If so, don't start creating a new one - let selection happen instead
+				// This allows selecting and deleting existing annotations with the tool active
+				const annotationIDs = this._getAnnotationsAtPoint ? this._getAnnotationsAtPoint(event.clientX, event.clientY) : [];
+				if (annotationIDs && annotationIDs.length > 0) {
+					debugLog('[DOCXView._handlePointerDown] Clicked on existing annotation(s):', annotationIDs, '- skipping annotation creation');
+					return;
+				}
+				
 				debugLog('[DOCXView._handlePointerDown] Tool type:', this._tool.type, 'Event:', {
 					clientX: event.clientX,
 					clientY: event.clientY,

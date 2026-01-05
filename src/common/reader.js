@@ -885,11 +885,11 @@ class Reader {
 	}
 
 	openContextMenu(params) {
-		debugLog('[Reader.openContextMenu] Called with params:', params);
+		console.log('[Reader.openContextMenu] Called with params:', params);
 		this._onBringReaderToFront?.(true);
-		debugLog('[Reader.openContextMenu] About to call _updateState with contextMenu:', { x: params.x, y: params.y, itemGroupsCount: params.itemGroups?.length });
+		console.log('[Reader.openContextMenu] About to call _updateState with contextMenu:', { x: params.x, y: params.y, itemGroupsCount: params.itemGroups?.length });
 		this._updateState({ contextMenu: params });
-		debugLog('[Reader.openContextMenu] _updateState called, checking if state was updated:', { hasContextMenu: !!this._state.contextMenu });
+		console.log('[Reader.openContextMenu] _updateState called, checking if state was updated:', { hasContextMenu: !!this._state.contextMenu });
 		setTimeout(() => {
 			window.focus();
 			document.activeElement.blur();
@@ -1142,7 +1142,16 @@ class Reader {
 		};
 
 		let onOpenAnnotationContextMenu = (params) => {
-			this._onOpenContextMenu(createAnnotationContextMenu(this, params));
+			console.log('[Reader.onOpenAnnotationContextMenu] Called with params:', params);
+			let menuParams = createAnnotationContextMenu(this, params);
+			console.log('[Reader.onOpenAnnotationContextMenu] Created menu params:', { 
+				x: menuParams.x, 
+				y: menuParams.y, 
+				itemGroupsCount: menuParams.itemGroups?.length,
+				internal: menuParams.internal
+			});
+			this.openContextMenu(menuParams);
+			console.log('[Reader.onOpenAnnotationContextMenu] Called openContextMenu');
 		};
 
 		let onOpenViewContextMenu = (params) => {
