@@ -53,6 +53,18 @@ export const ReaderContext = createContext({});
 
 class Reader {
 	constructor(options) {
+		console.log('[Reader] CONSTRUCTOR STARTING');
+		console.log('[Reader] options.type:', options.type);
+		console.log('[Reader] window._reader before:', !!window._reader);
+		console.log('[Reader] window.createReader exists:', typeof window.createReader);
+		console.log('[Reader] window.setFindQueryWhenReady exists:', typeof window.setFindQueryWhenReady);
+		console.log('[Reader] window.location:', window.location?.href);
+		
+		// Set window._reader EARLY so it's available even if _updateState blocks
+		// This allows setFindQueryWhenReady to access the reader during initialization
+		window._reader = this;
+		console.log('[Reader] window._reader SET EARLY');
+		
 		window.rtl = options.rtl;
 		document.getElementsByTagName("html")[0].dir = options.rtl ? 'rtl' : 'ltr';
 
@@ -237,6 +249,7 @@ class Reader {
 			this._state.secondaryViewState = state;
 		}
 
+		console.log('[Reader] CHECKPOINT 1: Creating FocusManager');
 		this._focusManager = new FocusManager({
 			reader: this,
 			onDeselectAnnotations: () => {
@@ -250,10 +263,12 @@ class Reader {
 			}
 		});
 
+		console.log('[Reader] CHECKPOINT 2: Creating KeyboardManager');
 		this._keyboardManager = new KeyboardManager({
 			reader: this
 		});
 
+		console.log('[Reader] CHECKPOINT 3: Creating AnnotationManager');
 		this._annotationManager = new AnnotationManager({
 			readOnly: this._state.readOnly,
 			authorName: options.authorName,
@@ -279,8 +294,10 @@ class Reader {
 			delete options.location;
 		}
 
+		console.log('[Reader] CHECKPOINT 4: About to create primary view');
 		try {
 			this._primaryView = this._createView(true, options.location);
+			console.log('[Reader] CHECKPOINT 5: Primary view created successfully');
 		} catch (e) {
 			console.error('Failed to create primary view:', e);
 			this.setErrorMessage(`Failed to load document: ${e.message}`);
@@ -477,7 +494,9 @@ class Reader {
 			);
 		}
 
+		console.log('[Reader] CHECKPOINT 6: About to call _updateState');
 		this._updateState(this._state, true);
+		console.log('[Reader] CHECKPOINT 7: _updateState completed');
 
 		// window.addEventListener("wheel", event => {
 		// 	const delta = Math.sign(event.deltaY);
@@ -492,6 +511,15 @@ class Reader {
 				}
 			});
 		}
+		console.log('[Reader] CHECKPOINT 8: Event listeners added');
+		
+		console.log('[Reader] CONSTRUCTOR COMPLETED');
+		console.log('[Reader] this._type:', this._type);
+		// Check window._reader after a small delay to see if it gets set
+		setTimeout(() => {
+			console.log('[Reader] After 100ms - window._reader exists:', !!window._reader);
+			console.log('[Reader] After 100ms - window._reader === this:', window._reader === this);
+		}, 100);
 	}
 
 	_ensureType() {
@@ -521,6 +549,7 @@ class Reader {
 	}
 
 	_updateState(state, init) {
+		if (init) console.log('[Reader._updateState] STARTING (init=true)');
 		let previousState = this._state;
 
 		// Debug: Log what's being updated
@@ -535,8 +564,10 @@ class Reader {
 			});
 		}
 
+		if (init) console.log('[Reader._updateState] STEP A: merging state');
 		this._state = { ...this._state, ...state };
 		
+		if (init) console.log('[Reader._updateState] STEP B: updating React');
 		// Debug: Log React state update
 		if (this._readerRef.current) {
 			debugLog('[Reader._updateState] Calling React setState, ref exists:', !!this._readerRef.current);
@@ -544,18 +575,24 @@ class Reader {
 		} else {
 			debugLog('[Reader._updateState] Reader ref is null, cannot update React state');
 		}
+		if (init) console.log('[Reader._updateState] STEP C: React updated');
 
+		if (init) console.log('[Reader._updateState] STEP C1: checking annotations');
 		if (this._state.annotations !== previousState.annotations) {
+			if (init) console.log('[Reader._updateState] STEP C1a: calling setAnnotations');
 			let annotations = this._state.annotations.filter(x => !x._hidden);
 			this._primaryView?.setAnnotations(annotations);
 			this._secondaryView?.setAnnotations(annotations);
+			if (init) console.log('[Reader._updateState] STEP C1b: setAnnotations done');
 		}
 
+		if (init) console.log('[Reader._updateState] STEP C2: checking selectedAnnotationIDs');
 		if (this._state.selectedAnnotationIDs !== previousState.selectedAnnotationIDs) {
 			this._primaryView?.setSelectedAnnotationIDs(this._state.selectedAnnotationIDs);
 			this._secondaryView?.setSelectedAnnotationIDs(this._state.selectedAnnotationIDs);
 		}
 
+		if (init) console.log('[Reader._updateState] STEP C3: checking tool');
 		if (this._state.tool !== previousState.tool) {
 			debugLog('[Reader._updateState] Tool changed:', {
 				previous: previousState.tool?.type,
@@ -688,7 +725,9 @@ class Reader {
 			this._secondaryView?.setSidebarOpen(this._state.sidebarOpen);
 		}
 
+		if (init) console.log('🔴🔴🔴 [Reader._updateState] STEP D: before splitType check 🔴🔴🔴');
 		if (init || this._state.splitType !== previousState.splitType) {
+			if (init) console.log('[Reader._updateState] STEP D1: splitType condition met');
 			document.body.classList.remove('enable-horizontal-split-view');
 			document.body.classList.remove('enable-vertical-split-view');
 			// Split
@@ -755,6 +794,8 @@ class Reader {
 				document.body.classList.remove('freeze');
 			}
 		}
+		if (init) console.log('✅✅✅ [Reader._updateState] COMPLETED (init=true) ✅✅✅');
+		if (init) this._constructorCompleted = true;
 	}
 
 	disableSplitView() {
