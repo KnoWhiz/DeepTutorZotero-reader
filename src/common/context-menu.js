@@ -50,7 +50,20 @@ export function createColorContextMenu(reader, params) {
 						disabled: reader._state.readOnly,
 						checked: color === reader._state.tool.color,
 						color: color,
-						onCommand: () => reader.setTool({ color })
+						onCommand: () => {
+							function debugLog(...args) {
+								console.log(...args);
+								try {
+									if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+										if (window.parent.Zotero && window.parent.Zotero.debug) {
+											window.parent.Zotero.debug('[ColorContextMenu] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+										}
+									}
+								} catch (e) {}
+							}
+							debugLog('[ColorContextMenu] Color selected:', color, 'Current tool:', reader._state.tool);
+							reader.setTool({ color });
+						}
 					}))
 			],
 			[

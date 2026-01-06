@@ -10,11 +10,27 @@ import IconEraser from '../../../res/icons/16/annotate-eraser.svg';
 const VERTICAL_PADDING = 2;
 
 function BasicRow({ item, onClose }) {
+	function debugLog(...args) {
+		console.log(...args);
+		try {
+			if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+				if (window.parent.Zotero && window.parent.Zotero.debug) {
+					window.parent.Zotero.debug('[BasicRow] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+				}
+			}
+		} catch (e) {}
+	}
+
 	function handleClick(event, item) {
-		onClose();
+		debugLog('[BasicRow] handleClick called for item:', { label: item.label, color: item.color, hasOnCommand: !!item.onCommand });
 		event.preventDefault();
+		event.stopPropagation();
+		onClose();
 		// Allow context menu to close, before a confirmation popup
-		setTimeout(() => item.onCommand());
+		setTimeout(() => {
+			debugLog('[BasicRow] Calling item.onCommand');
+			item.onCommand();
+		});
 	}
 
 	return (
@@ -22,6 +38,10 @@ function BasicRow({ item, onClose }) {
 			tabIndex={-1}
 			className={cx('row basic', { checked: item.checked })}
 			onClick={(event) => handleClick(event, item)}
+			onMouseDown={(event) => {
+				// Prevent iframe from capturing the event
+				event.stopPropagation();
+			}}
 			disabled={item.disabled}
 		>
 			{item.color && <div className="icon"><IconColor16 color={item.color}/></div>}
@@ -71,7 +91,11 @@ function SliderRow({ item }) {
 
 
 	return (
-		<div className={cx('row slider', { checked: item.checked }, { center: isFirefox || isSafari })}>
+		<div 
+			className={cx('row slider', { checked: item.checked }, { center: isFirefox || isSafari })}
+			onMouseDown={(event) => event.stopPropagation()}
+			onClick={(event) => event.stopPropagation()}
+		>
 			<div>{l10n.getString('reader-size')}:</div>
 			<input
 				ref={inputRef}
@@ -84,6 +108,8 @@ function SliderRow({ item }) {
 				id="myRange"
 				disabled={item.disabled}
 				onChange={handleChange}
+				onMouseDown={(event) => event.stopPropagation()}
+				onClick={(event) => event.stopPropagation()}
 			/>
 			<div className="number">{size.toFixed(1)}</div>
 		</div>
@@ -91,6 +117,17 @@ function SliderRow({ item }) {
 }
 
 function ContextMenu({ params, onClose }) {
+	function debugLog(...args) {
+		console.log(...args);
+		try {
+			if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+				if (window.parent.Zotero && window.parent.Zotero.debug) {
+					window.parent.Zotero.debug('[ContextMenu] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+				}
+			}
+		} catch (e) {}
+	}
+
 	const [position, setPosition] = useState({ style: {} });
 	const [update, setUpdate] = useState();
 	const containerRef = useRef();
@@ -98,6 +135,7 @@ function ContextMenu({ params, onClose }) {
 	const searchTimeoutRef = useRef(null);
 
 	useEffect(() => {
+		debugLog('[ContextMenu] useEffect triggered, params:', params);
 		setUpdate({});
 	}, [params]);
 
@@ -128,11 +166,17 @@ function ContextMenu({ params, onClose }) {
 
 
 	function handlePointerDown(event) {
+		// Always stop propagation to prevent iframe from receiving events
+		event.stopPropagation();
 		if (event.target.classList.contains('context-menu-overlay')) {
 			// Closing context menu overlay results in another thumbnail click
 			setTimeout(onClose);
-			event.stopPropagation();
 		}
+	}
+
+	function handleClick(event) {
+		// Stop all clicks from reaching the iframe
+		event.stopPropagation();
 	}
 
 	// Select a menuitem from typing, similar to native context menus
@@ -162,16 +206,29 @@ function ContextMenu({ params, onClose }) {
 		}
 	}
 
-	function handleClick(event, item) {
-		onClose();
-		event.preventDefault();
-		// Allow context menu to close, before a confirmation popup
-		setTimeout(() => item.onCommand());
-	}
+	debugLog('[ContextMenu] Rendering with params:', { 
+		x: params.x, 
+		y: params.y, 
+		itemGroupsCount: params.itemGroups?.length,
+		internal: params.internal 
+	});
 
 	return (
-		<div className="context-menu-overlay" onPointerDown={handlePointerDown}>
-			<div ref={containerRef} className="context-menu" style={position.style} data-tabstop={1} onKeyDown={handleKeyDown}>
+		<div 
+			className="context-menu-overlay" 
+			onPointerDown={handlePointerDown}
+			onClick={handleClick}
+			onMouseDown={handleClick}
+		>
+			<div 
+				ref={containerRef} 
+				className="context-menu" 
+				style={position.style} 
+				data-tabstop={1} 
+				onKeyDown={handleKeyDown}
+				onClick={handleClick}
+				onMouseDown={handleClick}
+			>
 				{params.itemGroups.map((items, i) => (
 					<div key={i} className="group">
 						{items.map((item, i) => {

@@ -1,4 +1,4 @@
-import React, { Fragment, useState, useRef, useImperativeHandle } from 'react';
+import React, { Fragment, useState, useRef, useImperativeHandle, useEffect } from 'react';
 import { LocalizationProvider, ReactLocalization } from "@fluent/react";
 import Toolbar from './toolbar';
 import Sidebar from './sidebar/sidebar';
@@ -58,12 +58,48 @@ function View(props) {
 					onChangeTextSelectionAnnotationMode={props.onChangeTextSelectionAnnotationMode}
 				/>
 			}
-			{state[name + 'ViewAnnotationPopup']
-				&& (
-					(!state.sidebarOpen || state.sidebarView !== 'annotations')
-					&& state.annotations.find(x => x.id === state[name + 'ViewAnnotationPopup'].annotation.id)
-				)
-				&& <AnnotationPopup
+			{(() => {
+				const hasPopup = !!state[name + 'ViewAnnotationPopup'];
+				const sidebarCondition = !state.sidebarOpen || state.sidebarView !== 'annotations';
+				const annotationInState = hasPopup ? state.annotations.find(x => x.id === state[name + 'ViewAnnotationPopup'].annotation.id) : null;
+				const shouldShow = hasPopup && sidebarCondition && annotationInState;
+				
+				if (hasPopup) {
+					console.log(`[ReaderUI] Annotation popup check for ${name}:`, {
+						hasPopup,
+						sidebarOpen: state.sidebarOpen,
+						sidebarView: state.sidebarView,
+						sidebarCondition,
+						annotationId: state[name + 'ViewAnnotationPopup'].annotation.id,
+						annotationInState: !!annotationInState,
+						annotationsCount: state.annotations.length,
+						shouldShow: !!shouldShow, // Explicitly convert to boolean for logging
+						shouldShowType: typeof shouldShow
+					});
+					try {
+						if (window.parent && window.parent.Zotero && window.parent.Zotero.debug) {
+							window.parent.Zotero.debug(`[ReaderUI] Annotation popup check for ${name}: hasPopup=${hasPopup}, sidebarCondition=${sidebarCondition}, annotationInState=${!!annotationInState}, shouldShow=${!!shouldShow}`);
+						}
+					} catch (e) {}
+				}
+				
+				if (shouldShow) {
+					console.log(`[ReaderUI] Rendering AnnotationPopup for ${name}, annotation:`, state[name + 'ViewAnnotationPopup'].annotation);
+					try {
+						if (window.parent && window.parent.Zotero && window.parent.Zotero.debug) {
+							window.parent.Zotero.debug(`[ReaderUI] Rendering AnnotationPopup for ${name}, annotation ID: ${state[name + 'ViewAnnotationPopup'].annotation.id}, type: ${state[name + 'ViewAnnotationPopup'].annotation.type}`);
+						}
+					} catch (e) {}
+				} else if (hasPopup) {
+					console.log(`[ReaderUI] NOT rendering AnnotationPopup for ${name} - shouldShow is false`);
+					try {
+						if (window.parent && window.parent.Zotero && window.parent.Zotero.debug) {
+							window.parent.Zotero.debug(`[ReaderUI] NOT rendering AnnotationPopup for ${name} - shouldShow is false`);
+						}
+					} catch (e) {}
+				}
+				
+				return shouldShow && <AnnotationPopup
 					type={props.type}
 					readOnly={state.readOnly}
 					params={state[name + 'ViewAnnotationPopup']}
@@ -74,7 +110,8 @@ function View(props) {
 					onOpenPageLabelPopup={props.onOpenPageLabelPopup}
 					onOpenAnnotationContextMenu={props.onOpenAnnotationContextMenu}
 					onSetDataTransferAnnotations={props.onSetDataTransferAnnotations}
-				/>}
+				/>;
+			})()}
 			{state[name + 'ViewOverlayPopup'] &&
 				<OverlayPopup
 					params={state[name + 'ViewOverlayPopup']}
@@ -102,8 +139,38 @@ const ReaderUI = React.forwardRef((props, ref) => {
 	let sidebarRef = useRef();
 	let annotationsViewRef = useRef();
 
+	// Debug helper
+	function debugLog(...args) {
+		console.log(...args);
+		try {
+			if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+				if (window.parent.Zotero && window.parent.Zotero.debug) {
+					window.parent.Zotero.debug('[ReaderUI] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+				}
+			}
+		} catch (e) {}
+	}
+
+	// Note: We don't sync from props.state because Reader is not a React component
+	// and props.state reference doesn't change from React's perspective.
+	// All state updates come through the ref-based setState below.
+	
 	useImperativeHandle(ref, () => ({
-		setState,
+		setState: (newState) => {
+			debugLog('[ReaderUI] setState called via ref:', {
+				lightTheme: newState.lightTheme?.id,
+				darkTheme: newState.darkTheme?.id,
+				tool: newState.tool?.type,
+				toolColor: newState.tool?.color,
+				contextMenu: newState.contextMenu ? { x: newState.contextMenu.x, y: newState.contextMenu.y, itemGroupsCount: newState.contextMenu.itemGroups?.length } : null
+			});
+			// Use functional setState to ensure we always update, even if object reference is the same
+			setState(prevState => {
+				// Force update by checking if anything actually changed
+				// This ensures React always re-renders when state is updated externally
+				return newState;
+			});
+		},
 		sidebarScrollAnnotationIntoView: (id) => annotationsViewRef.current?.scrollAnnotationIntoView(id),
 		sidebarEditAnnotationText: (id) => annotationsViewRef.current?.editAnnotationText(id),
 	}));
@@ -215,7 +282,26 @@ const ReaderUI = React.forwardRef((props, ref) => {
 					<SplitViewResizer onResize={props.onResizeSplitView}/>
 					{state.splitType && <View {...props} primary={false} state={state} />}
 				</div>
-				{state.contextMenu && <ContextMenu params={state.contextMenu} onClose={props.onCloseContextMenu}/>}
+				{(() => {
+					debugLog('[ReaderUI] Checking contextMenu state:', { 
+						hasContextMenu: !!state.contextMenu,
+						contextMenu: state.contextMenu ? { 
+							x: state.contextMenu.x, 
+							y: state.contextMenu.y, 
+							itemGroupsCount: state.contextMenu.itemGroups?.length,
+							internal: state.contextMenu.internal 
+						} : null
+					});
+					return state.contextMenu && (() => {
+						debugLog('[ReaderUI] Rendering ContextMenu, params:', { 
+							x: state.contextMenu.x, 
+							y: state.contextMenu.y, 
+							itemGroupsCount: state.contextMenu.itemGroups?.length,
+							internal: state.contextMenu.internal 
+						});
+						return <ContextMenu params={state.contextMenu} onClose={props.onCloseContextMenu}/>;
+					})();
+				})()}
 				{state.labelPopup && <LabelPopup params={state.labelPopup} onUpdateAnnotations={props.onUpdateAnnotations} onClose={props.onCloseLabelPopup}/>}
 				{state.passwordPopup && <PasswordPopup params={state.passwordPopup} onEnterPassword={props.onEnterPassword}/>}
 				{state.printPopup && <PrintPopup params={state.printPopup}/>}

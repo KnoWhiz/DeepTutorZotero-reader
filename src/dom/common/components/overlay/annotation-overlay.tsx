@@ -16,11 +16,13 @@ import {
 	supportsCaretPositionFromPoint
 } from "../../lib/range";
 import { AnnotationType } from "../../../../common/types";
-import ReactDOM from "react-dom";
+// @ts-ignore - react-dom types issue
+import * as ReactDOM from "react-dom";
 import { IconNoteLarge } from "../../../../common/components/common/icons";
 import { closestElement, isRTL, isVertical } from "../../lib/nodes";
 import { isSafari } from "../../../../common/lib/utilities";
 import { expandRect, getBoundingRect, rectsEqual } from "../../lib/rect";
+// @ts-ignore - classnames doesn't have type definitions but is used throughout the codebase
 import cx from "classnames";
 
 export type DisplayedAnnotation = {
@@ -37,7 +39,44 @@ export type DisplayedAnnotation = {
 };
 
 export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
-	let { iframe, annotations, selectedAnnotationIDs, onPointerDown, onPointerUp, onContextMenu, onDragStart, onResizeStart, onResizeEnd } = props;
+	let { iframe, annotations, selectedAnnotationIDs, onPointerDown, onPointerUp, onContextMenu, onDragStart, onResizeStart, onResizeEnd, onTextChange } = props;
+	
+	// Store onTextChange in a ref to ensure it's always available in closures
+	// Initialize with current value and update immediately if it changes
+	const onTextChangeRef = React.useRef(onTextChange);
+	// Update ref immediately (not just in effect) to ensure it's always current
+	if (onTextChangeRef.current !== onTextChange) {
+		onTextChangeRef.current = onTextChange;
+	}
+	React.useEffect(() => {
+		onTextChangeRef.current = onTextChange;
+	}, [onTextChange]);
+	
+	// Debug log for onTextChange prop
+	console.log('[AnnotationOverlay] AnnotationOverlay rendered with onTextChange:', {
+		hasOnTextChange: !!onTextChange,
+		hasOnTextChangeRef: !!onTextChangeRef.current,
+		onTextChangeType: typeof onTextChange,
+		onTextChangeValue: onTextChange,
+		onTextChangeInProps: 'onTextChange' in props,
+		propsOnTextChange: (props as any).onTextChange,
+		propsOnTextChangeType: typeof (props as any).onTextChange,
+		propsKeys: Object.keys(props),
+		propsKeysList: Object.keys(props).join(', ')
+	});
+	
+	// Debug log for onTextChange prop
+	console.log('[AnnotationOverlay] AnnotationOverlay rendered with onTextChange:', {
+		hasOnTextChange: !!onTextChange,
+		hasOnTextChangeRef: !!onTextChangeRef.current,
+		onTextChangeType: typeof onTextChange,
+		onTextChangeValue: onTextChange,
+		onTextChangeInProps: 'onTextChange' in props,
+		propsOnTextChange: (props as any).onTextChange,
+		propsOnTextChangeType: typeof (props as any).onTextChange,
+		propsKeys: Object.keys(props),
+		propsKeysList: Object.keys(props).join(', ')
+	});
 
 	let [isResizing, setResizing] = useState(false);
 	let [isPointerDownOutside, setPointerDownOutside] = useState(false);
@@ -103,6 +142,14 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 	}, [onPointerUp]);
 
 	let handleContextMenu = useCallback((annotation: DisplayedAnnotation, event: React.MouseEvent) => {
+		console.log('[AnnotationOverlay.handleContextMenu] React contextmenu event on annotation:', {
+			annotationId: annotation.id,
+			annotationType: annotation.type,
+			clientX: event.clientX,
+			clientY: event.clientY,
+			target: event.target,
+			hasOnContextMenu: !!onContextMenu,
+		});
 		onContextMenu(annotation.id!, event);
 	}, [onContextMenu]);
 
@@ -126,6 +173,9 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 	let numSelectedHighlightUnderlines = 0;
 	let notes: DisplayedAnnotation[] = [];
 	let notePreviews: DisplayedAnnotation[] = [];
+	let textAnnotations: DisplayedAnnotation[] = [];
+	let imageAnnotations: DisplayedAnnotation[] = [];
+	let inkAnnotations: DisplayedAnnotation[] = [];
 	for (let annotation of annotations) {
 		if (annotation.type === 'highlight' || annotation.type === 'underline') {
 			// Put selected highlights/underlines at the end of the array,
@@ -149,6 +199,15 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 			else {
 				notePreviews.push(annotation);
 			}
+		}
+		else if (annotation.type === 'text') {
+			textAnnotations.push(annotation);
+		}
+		else if (annotation.type === 'image') {
+			imageAnnotations.push(annotation);
+		}
+		else if (annotation.type === 'ink') {
+			inkAnnotations.push(annotation);
 		}
 	}
 
@@ -188,6 +247,61 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 			{notePreviews.map(annotation => (
 				<NotePreview annotation={annotation} key={annotation.key} />
 			))}
+			{textAnnotations.map(annotation => {
+					// Use ref to get the latest onTextChange, with fallback to prop
+				// Ensure we always pass a function (even if it's a no-op) to avoid undefined issues
+					const textChangeHandler = onTextChangeRef.current || onTextChange;
+				const safeTextChangeHandler = typeof textChangeHandler === 'function' 
+					? textChangeHandler 
+					: ((id: string, text: string) => {
+						console.warn('[AnnotationOverlay] onTextChange is not a function, text changes will not be saved', {
+							annotationId: id,
+						hasOnTextChange: !!onTextChange,
+						hasOnTextChangeRef: !!onTextChangeRef.current,
+							hasTextChangeHandler: !!textChangeHandler
+						});
+					});
+				console.log('[AnnotationOverlay] Rendering TextAnnotation:', {
+					annotationId: annotation.id,
+					pointerEventsSuppressed: pointerEventsSuppressed,
+					isResizing: isResizing,
+					isPointerDownOutside: isPointerDownOutside,
+					isAltDown: isAltDown,
+					hasOnPointerDown: !!handlePointerDown
+					});
+					return (
+						<TextAnnotation
+							annotation={annotation}
+							key={annotation.key}
+							iframe={iframe}
+							selected={annotation.id ? selectedAnnotationIDs.includes(annotation.id) : false}
+							onPointerDown={annotation.id ? handlePointerDown : undefined}
+							onPointerUp={annotation.id ? handlePointerUp : undefined}
+							onContextMenu={annotation.id ? handleContextMenu : undefined}
+						onTextChange={safeTextChangeHandler}
+						/>
+					);
+			})}
+			{imageAnnotations.map(annotation => (
+				<ImageAnnotation
+					annotation={annotation}
+					key={annotation.key}
+					selected={annotation.id ? selectedAnnotationIDs.includes(annotation.id) : false}
+					onPointerDown={annotation.id ? handlePointerDown : undefined}
+					onPointerUp={annotation.id ? handlePointerUp : undefined}
+					onContextMenu={annotation.id ? handleContextMenu : undefined}
+				/>
+			))}
+			{inkAnnotations.map(annotation => (
+				<InkAnnotation
+					annotation={annotation}
+					key={annotation.key}
+					selected={annotation.id ? selectedAnnotationIDs.includes(annotation.id) : false}
+					onPointerDown={annotation.id ? handlePointerDown : undefined}
+					onPointerUp={annotation.id ? handlePointerUp : undefined}
+					onContextMenu={annotation.id ? handleContextMenu : undefined}
+				/>
+			))}
 		</svg>
 		<svg
 			className={cx('annotation-container', { 'disable-pointer-events': pointerEventsSuppressed })}
@@ -206,6 +320,636 @@ export const AnnotationOverlay: React.FC<AnnotationOverlayProps> = (props) => {
 };
 AnnotationOverlay.displayName = 'AnnotationOverlay';
 
+// Text annotation component
+let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
+	let { annotation, selected, onPointerDown, onPointerUp, onContextMenu, iframe, onTextChange } = props;
+	
+	// Debug log to see what we're receiving
+	console.log('[TextAnnotation] TextAnnotation rendered with props:', {
+		annotationId: annotation.id,
+		hasOnTextChange: !!onTextChange,
+		onTextChangeType: typeof onTextChange,
+		onTextChangeValue: onTextChange,
+		propsKeys: Object.keys(props),
+		onTextChangeInProps: 'onTextChange' in props
+	});
+	
+	// Store onTextChange in a ref to avoid closure issues with React.memo
+	// Initialize with the current prop value
+	const onTextChangeRef = React.useRef(onTextChange);
+	
+	// Always update ref to latest value (even if memo prevents re-render)
+	// This ensures we always have the latest callback
+	if (onTextChangeRef.current !== onTextChange) {
+		onTextChangeRef.current = onTextChange;
+	}
+	
+	React.useEffect(() => {
+		onTextChangeRef.current = onTextChange;
+		console.log('[TextAnnotation] onTextChange ref updated in useEffect:', {
+		annotationId: annotation.id,
+		hasOnTextChange: !!onTextChange,
+			hasRefCurrent: !!onTextChangeRef.current
+		});
+	}, [onTextChange, annotation.id]);
+	
+	// Use ref to track the textarea element (like PDF does with DOM nodes)
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const foreignObjectRef = useRef<SVGForeignObjectElement>(null);
+	// Use local state to store the current value and prevent cursor position resets
+	// This matches PDF's approach of only updating the DOM value when it differs
+	const [localValue, setLocalValue] = useState<string>(annotation.comment || '');
+	const [isHovered, setIsHovered] = useState(false);
+	const [dynamicDimensions, setDynamicDimensions] = useState<{ width: number; height: number } | null>(null);
+	const lastPropValueRef = useRef<string>(annotation.comment || '');
+	const lastAnnotationIdRef = useRef<string | undefined>(annotation.id);
+	// Auto-focus when annotation is newly created (empty comment)
+	const shouldAutoFocusRef = useRef<boolean>(!annotation.comment || annotation.comment === '');
+	
+	// Reset state when annotation ID changes (new annotation created)
+	useEffect(() => {
+		if (annotation.id !== lastAnnotationIdRef.current) {
+			lastAnnotationIdRef.current = annotation.id;
+			const newComment = annotation.comment || '';
+			shouldAutoFocusRef.current = !newComment || newComment === '';
+			lastPropValueRef.current = newComment;
+			setLocalValue(newComment);
+		}
+	}, [annotation.id, annotation.comment]);
+	
+	// Get position data from annotation
+	const positionData = (annotation as any)._positionData;
+	if (!positionData || !positionData.rects || !positionData.rects[0]) {
+		return null;
+	}
+	
+	const rect = positionData.rects[0];
+	
+	// Get document from iframe instead of range (range might be from temporary element)
+	const doc = iframe?.contentDocument;
+	if (!doc || !doc.defaultView) {
+		return null;
+	}
+	
+	// Use getBoundingPageRect to convert range to page coordinates (like other annotations)
+	// But since we have absolute coordinates, we can use them directly
+	// The rect coordinates are already in document/page coordinates
+	const pageRect = {
+		x: rect[0],
+		y: rect[1],
+		width: rect[2] - rect[0],
+		height: rect[3] - rect[1]
+	};
+	
+	// Sync prop value to local state only when it changes externally (like PDF checks data-comment attribute)
+	// This prevents cursor position resets during typing
+	useEffect(() => {
+		const propValue = annotation.comment || '';
+		// Skip if we're already syncing due to ID change
+		if (propValue === lastPropValueRef.current) {
+			return;
+		}
+		// Only update if the prop value is actually different from what we have locally
+		// and if the user isn't currently typing (textarea isn't focused)
+		// Use iframe document to check active element
+		const isFocused = doc?.activeElement === textareaRef.current;
+		// CRITICAL: Don't sync if focused AND the prop value matches what we just saved
+		// This prevents overwriting user input while typing
+		if (!isFocused) {
+			// Only sync when not focused - this allows external updates to come through
+			if (propValue !== localValue) {
+			lastPropValueRef.current = propValue;
+			setLocalValue(propValue);
+			}
+		} else {
+			// When focused, only update if the prop value is different AND we didn't just set it
+			// This handles external updates while typing (shouldn't happen, but be safe)
+			if (propValue !== lastPropValueRef.current && propValue !== localValue) {
+				lastPropValueRef.current = propValue;
+				setLocalValue(propValue);
+			}
+		}
+	}, [annotation.comment, doc]); // Remove localValue from dependencies to prevent loop
+	
+	// Auto-focus when annotation is newly created (empty comment), like PDF behavior
+	useEffect(() => {
+		if (shouldAutoFocusRef.current && textareaRef.current && !annotation.readOnly) {
+			// Use setTimeout to ensure the element is fully rendered and focusable
+			setTimeout(() => {
+				if (textareaRef.current) {
+					textareaRef.current.focus();
+					// Move cursor to end
+					const len = textareaRef.current.value.length;
+					textareaRef.current.setSelectionRange(len, len);
+					shouldAutoFocusRef.current = false;
+				}
+			}, 0);
+		}
+	}, [annotation.id, annotation.readOnly]);
+	
+	// Add native event listeners to debug if events are reaching the textarea at all
+	useEffect(() => {
+		const textarea = textareaRef.current;
+		if (!textarea) return;
+		
+		// Get the iframe window and document
+		const iframeWindow = iframe.contentWindow;
+		const iframeDocument = iframe.contentDocument;
+		if (!iframeWindow || !iframeDocument) return;
+		
+		const handleNativeClick = (e: MouseEvent) => {
+			console.log('[TextAnnotation] ===== NATIVE CLICK EVENT ON TEXTAREA =====', {
+				annotationId: annotation.id,
+				target: e.target,
+				currentTarget: e.currentTarget,
+				type: e.type
+			});
+		};
+		
+		const handleNativePointerDown = (e: PointerEvent) => {
+			console.log('[TextAnnotation] ===== NATIVE POINTER DOWN ON TEXTAREA =====', {
+				annotationId: annotation.id,
+				target: e.target,
+				currentTarget: e.currentTarget,
+				type: e.type,
+				pointerType: e.pointerType,
+				button: e.button
+			});
+		};
+		
+		// Handle Delete/Backspace in capture phase to prevent parent from deleting annotation
+		// when textarea is focused (has active cursor)
+		// Listen on both textarea and iframe window to catch events early
+		const handleNativeKeyDown = (e: KeyboardEvent) => {
+			if (e.key === 'Delete' || e.key === 'Backspace') {
+				// Check if textarea is focused (has active cursor)
+				// Use iframe document's activeElement to check focus
+				const isFocused = iframeDocument.activeElement === textarea 
+					|| e.target === textarea 
+					|| (e.target instanceof Element && e.target.closest('textarea') === textarea);
+				
+				console.log('[TextAnnotation.handleNativeKeyDown] Delete/Backspace pressed:', {
+					annotationId: annotation.id,
+					key: e.key,
+					isFocused: isFocused,
+					activeElement: iframeDocument.activeElement instanceof Element ? iframeDocument.activeElement.tagName : 'not Element',
+					eventTarget: e.target instanceof Element ? e.target.tagName : 'not Element',
+					textareaRef: !!textarea
+				});
+				
+				if (isFocused) {
+					// Textarea has focus - stop immediate propagation to prevent ALL other handlers (including keyboard manager)
+					// Allow normal delete/backspace behavior in the textarea
+					console.log('[TextAnnotation.handleNativeKeyDown] Textarea is focused - stopping immediate propagation, allowing normal delete');
+					e.stopImmediatePropagation();
+					e.stopPropagation();
+		} else {
+					// If not focused, don't stop propagation - let parent handle deletion
+					console.log('[TextAnnotation.handleNativeKeyDown] Textarea is NOT focused - allowing propagation for annotation deletion');
+				}
+			}
+		};
+		
+		textarea.addEventListener('click', handleNativeClick, true);
+		textarea.addEventListener('pointerdown', handleNativePointerDown, true);
+		// Use capture phase (true) to intercept before parent handler runs
+		textarea.addEventListener('keydown', handleNativeKeyDown, true);
+		
+		// Also listen on iframe window in capture phase to catch events even earlier
+		// This ensures we intercept before DOMView's _handleKeyDown runs
+		iframeWindow.addEventListener('keydown', handleNativeKeyDown, true);
+		
+		return () => {
+			textarea.removeEventListener('click', handleNativeClick, true);
+			textarea.removeEventListener('pointerdown', handleNativePointerDown, true);
+			textarea.removeEventListener('keydown', handleNativeKeyDown, true);
+			iframeWindow.removeEventListener('keydown', handleNativeKeyDown, true);
+		};
+	}, [annotation.id, textareaRef.current, iframe]);
+	
+	const handleInput = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+		const newValue = event.target.value;
+		const oldValue = localValue;
+		
+		console.log('[TextAnnotation.handleInput] Keystroke detected:', {
+			annotationId: annotation.id,
+			oldValue: oldValue,
+			newValue: newValue,
+			valueLength: newValue.length,
+			addedText: newValue.slice(oldValue.length),
+			removedText: oldValue.slice(newValue.length),
+			eventType: event.type,
+			targetValue: event.target.value
+		});
+		
+		// Update local state immediately for responsive typing
+		setLocalValue(newValue);
+		
+		// Auto-resize textarea and foreignObject based on content
+		const textarea = event.target;
+		// Reset height to auto to get accurate scrollHeight
+		textarea.style.height = 'auto';
+		textarea.style.width = 'auto';
+		
+		const fontSize = positionData.fontSize || 16;
+		const minWidth = fontSize;
+		const minHeight = fontSize;
+		
+		// Measure the content
+		const scrollHeight = Math.max(textarea.scrollHeight, minHeight);
+		const scrollWidth = Math.max(
+			textarea.scrollWidth || 0,
+			pageRect.width || minWidth,
+			newValue.length > 0 ? Math.min(newValue.length * (fontSize * 0.6), 300) : minWidth
+		);
+		
+		// Update textarea dimensions
+		textarea.style.height = scrollHeight + 'px';
+		textarea.style.width = '100%';
+		
+		// Update foreignObject dimensions dynamically
+		if (foreignObjectRef.current) {
+			foreignObjectRef.current.setAttribute('width', String(scrollWidth));
+			foreignObjectRef.current.setAttribute('height', String(scrollHeight));
+		}
+		
+		// Store dynamic dimensions for render
+		setDynamicDimensions({ width: scrollWidth, height: scrollHeight });
+		
+		// Update the annotation via callback (like PDF's _handleInput)
+		// Use ref to get the latest callback (check both ref and prop as fallback)
+		const textChangeCallback = onTextChangeRef.current || onTextChange;
+		if (annotation.id && textChangeCallback) {
+			// CRITICAL: Update lastPropValueRef when we save to prevent useEffect from syncing stale value back
+			// This ensures that if the component re-renders before the prop updates, we don't lose the text
+			lastPropValueRef.current = newValue;
+			textChangeCallback(annotation.id, newValue);
+		} else {
+			if (!textChangeCallback) {
+				console.warn('[TextAnnotation] Cannot call onTextChange - missing callback', {
+					hasRef: !!onTextChangeRef.current,
+					hasProp: !!onTextChange
+				});
+			}
+		}
+	};
+	
+	const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+		// Handle Escape key to blur (like PDF)
+		if (event.key === 'Escape') {
+			event.stopPropagation();
+			event.preventDefault();
+			event.currentTarget.blur();
+		}
+		// Delete/Backspace handling is done in native capture-phase listener
+		// to prevent parent from deleting annotation when textarea is focused
+		// Enter key should insert a newline (default behavior)
+		// No need to prevent default or stop propagation
+	};
+	
+	const handleFocus = () => {
+		// Textarea focused - no action needed
+	};
+	
+	const handleBlur = () => {
+		const finalValue = textareaRef.current?.value || '';
+		
+		// Ensure final value is saved on blur (in case there were any last changes)
+		// Use ref to get the latest callback (check both ref and prop as fallback)
+		const textChangeCallback = onTextChangeRef.current || onTextChange;
+		if (annotation.id && textChangeCallback) {
+			// Update local state to match the actual textarea value
+			if (finalValue !== localValue) {
+				setLocalValue(finalValue);
+			}
+			
+			// CRITICAL: Update lastPropValueRef BEFORE saving to prevent useEffect from syncing stale prop value back
+			// This prevents the text from disappearing when the component re-renders after save
+			lastPropValueRef.current = finalValue;
+			
+			// Always save the final value (this ensures it's persisted)
+			textChangeCallback(annotation.id, finalValue);
+		} else if (!textChangeCallback) {
+			console.warn('[TextAnnotation] Cannot save on blur - missing onTextChange callback');
+		}
+	};
+	
+	
+	// Calculate dimensions - use dynamic if set, otherwise use pageRect
+	const fontSize = positionData.fontSize || 16;
+	const minWidth = fontSize;
+	const minHeight = fontSize;
+	
+	const displayWidth = dynamicDimensions?.width || Math.max(pageRect.width || minWidth, minWidth);
+	const displayHeight = dynamicDimensions?.height || Math.max(pageRect.height || minHeight, minHeight);
+	
+	// Recalculate dimensions when pageRect changes (annotation position updated)
+	useEffect(() => {
+		// If pageRect dimensions changed, update dynamic dimensions
+		if (pageRect.width > 0 && pageRect.height > 0) {
+			// Reset dynamic dimensions to use pageRect when it updates
+			// (This happens when annotation position is recalculated after text change)
+			setDynamicDimensions(null);
+		}
+	}, [pageRect.width, pageRect.height]);
+	
+	// Initialize/recalculate dimensions based on content
+	useEffect(() => {
+		if (textareaRef.current) {
+			const textarea = textareaRef.current;
+			const currentValue = localValue || '';
+			// Reset to measure
+			textarea.style.height = 'auto';
+			textarea.style.width = 'auto';
+			
+			const measuredHeight = Math.max(textarea.scrollHeight || minHeight, minHeight);
+			const measuredWidth = Math.max(
+				textarea.scrollWidth || 0,
+				pageRect.width || minWidth,
+				currentValue.length > 0 ? Math.min(currentValue.length * (fontSize * 0.6), 300) : minWidth
+			);
+			
+			// Apply measured height
+			textarea.style.height = measuredHeight + 'px';
+			
+			// Update foreignObject if it exists
+			// Account for border width (2px or 3px) and padding (4px top/bottom, 6px left/right)
+			// Since we're using border-box, the textarea width includes border, but foreignObject needs to match
+			const borderWidth = selected ? 3 : 2; // Will be updated on hover, but use current state
+			const paddingHorizontal = 6 * 2; // 6px left + 6px right
+			const paddingVertical = 4 * 2; // 4px top + 4px bottom
+			const borderTotal = borderWidth * 2; // left + right borders
+			const borderTotalVertical = borderWidth * 2; // top + bottom borders
+			
+			// foreignObject width should match the total width including borders
+			// Since textarea uses border-box, measuredWidth already includes border, but we need to ensure foreignObject is sized correctly
+			if (foreignObjectRef.current) {
+				// Set foreignObject to accommodate the full textarea including borders
+				foreignObjectRef.current.setAttribute('width', String(measuredWidth));
+				foreignObjectRef.current.setAttribute('height', String(measuredHeight));
+			}
+			
+			// Store for render
+			setDynamicDimensions({ width: measuredWidth, height: measuredHeight });
+		}
+	}, [localValue, annotation.id, fontSize, minWidth, minHeight, pageRect.width, pageRect.height]); // Recalculate when text or annotation changes
+	
+	console.log('[TextAnnotation] Rendering text annotation, checking pointer events:', {
+		annotationId: annotation.id,
+		readOnly: annotation.readOnly,
+		hasTextareaRef: !!textareaRef.current,
+		textareaValue: textareaRef.current?.value
+	});
+	
+	return (
+		<g
+			data-annotation-id={annotation.id}
+			style={{ pointerEvents: 'auto' }}
+			onPointerDown={(event) => {
+				// Only handle clicks on the border (wrapper div), not on textarea
+				// Clicks inside textarea will naturally focus it
+				const target = event.target as Element;
+				const isTextarea = target.tagName === 'TEXTAREA' || target.closest('textarea');
+				
+				// If clicking on border (wrapper div), select annotation
+				// If clicking inside textarea, let it focus naturally
+				if (!isTextarea && onPointerDown) {
+					onPointerDown(annotation, event);
+				}
+			}}
+			onPointerUp={onPointerUp && (event => onPointerUp!(annotation, event))}
+			onContextMenu={onContextMenu && (event => onContextMenu!(annotation, event))}
+		>
+			<foreignObject
+				ref={foreignObjectRef}
+				x={pageRect.x}
+				y={pageRect.y}
+				width={displayWidth}
+				height={displayHeight}
+				style={{ pointerEvents: 'auto', overflow: 'visible' }}
+			>
+				<div
+					onMouseEnter={() => setIsHovered(true)}
+					onMouseLeave={() => setIsHovered(false)}
+					onPointerDown={(e: React.PointerEvent) => {
+						// Clicking on border (wrapper div) - select annotation, don't focus textarea
+						e.stopPropagation();
+						if (onPointerDown) {
+							onPointerDown(annotation, e);
+						}
+					}}
+					style={{
+						width: '100%',
+						height: '100%',
+						// Border on the wrapper div to ensure all sides are visible
+						border: selected 
+							? '3px solid #6d95e0' 
+							: isHovered 
+								? '3px solid rgba(0, 0, 0, 0.5)' 
+								: '2px solid rgba(0, 0, 0, 0.3)',
+						background: 'rgba(255, 255, 255, 0.95)',
+						boxShadow: selected 
+							? '0 2px 4px rgba(109, 149, 224, 0.3)' 
+							: isHovered
+								? '0 2px 4px rgba(0, 0, 0, 0.2)'
+								: '0 1px 2px rgba(0, 0, 0, 0.1)',
+						boxSizing: 'border-box',
+						transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+						padding: 0,
+						margin: 0
+					}}
+			>
+				<textarea
+					ref={textareaRef}
+					value={localValue}
+					onChange={handleInput}
+					onKeyDown={handleKeyDown}
+					onFocus={handleFocus}
+					onBlur={handleBlur}
+					onPointerDown={(e) => {
+						// Clicking inside textarea - allow normal focus behavior
+						// Stop propagation so border click handler doesn't interfere
+						e.stopPropagation();
+					}}
+					style={{
+						width: '100%',
+						minWidth: `${minWidth}px`,
+						height: '100%',
+						minHeight: `${minHeight}px`,
+						// No border on textarea - border is on wrapper div
+						border: 'none',
+						// Increased padding for larger clickable area
+						padding: '4px 6px',
+						fontSize: `${fontSize}px`,
+						fontFamily: 'inherit',
+						color: annotation.color || '#000000',
+						// Transparent background - parent div has the background
+						background: 'transparent',
+						resize: 'none',
+						overflow: 'hidden',
+						overflowY: 'auto',
+						whiteSpace: 'pre-wrap',
+						wordWrap: 'break-word',
+						outline: 'none',
+						cursor: 'text',
+						boxSizing: 'border-box',
+						margin: 0
+					}}
+					placeholder="Text annotation"
+					disabled={annotation.readOnly}
+					dir="auto"
+				/>
+				</div>
+			</foreignObject>
+		</g>
+	);
+};
+TextAnnotation.displayName = 'TextAnnotation';
+// Don't memoize TextAnnotation - onTextChange prop needs to update reliably
+// TextAnnotation = memo(TextAnnotation);
+type TextAnnotationProps = {
+	annotation: DisplayedAnnotation;
+	iframe: HTMLIFrameElement;
+	selected: boolean;
+	onPointerDown?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onPointerUp?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onContextMenu?: (annotation: DisplayedAnnotation, event: React.MouseEvent) => void;
+	onTextChange?: (id: string, text: string) => void;
+};
+
+// Image annotation component
+let ImageAnnotation: React.FC<ImageAnnotationProps> = (props) => {
+	let { annotation, selected, onPointerDown, onPointerUp, onContextMenu } = props;
+	
+	// Get position data from annotation
+	const positionData = (annotation as any)._positionData;
+	if (!positionData || !positionData.rects || !positionData.rects[0]) {
+		return null;
+	}
+	
+	const rect = positionData.rects[0];
+	const doc = annotation.range.commonAncestorContainer.ownerDocument;
+	if (!doc || !doc.defaultView) {
+		return null;
+	}
+	
+	// Convert to page coordinates
+	const pageRect = {
+		x: rect[0],
+		y: rect[1],
+		width: rect[2] - rect[0],
+		height: rect[3] - rect[1]
+	};
+	
+	return (
+		<g
+			data-annotation-id={annotation.id}
+			style={{ pointerEvents: 'auto' }}
+			onPointerDown={onPointerDown && (event => onPointerDown!(annotation, event))}
+			onPointerUp={onPointerUp && (event => onPointerUp!(annotation, event))}
+			onContextMenu={onContextMenu && (event => onContextMenu!(annotation, event))}
+		>
+			{/* Invisible thicker transparent stroke for easier clicking on border */}
+			<rect
+				x={pageRect.x}
+				y={pageRect.y}
+				width={pageRect.width}
+				height={pageRect.height}
+				fill="none"
+				stroke="transparent"
+				strokeWidth={Math.max(selected ? 8 : 6, 6)}
+				pointerEvents="stroke"
+			/>
+			{/* Visible stroke */}
+			<rect
+				x={pageRect.x}
+				y={pageRect.y}
+				width={pageRect.width}
+				height={pageRect.height}
+				fill="none"
+				stroke={annotation.color || '#000000'}
+				strokeWidth={selected ? 3 : 2}
+				opacity={selected ? 1 : 0.7}
+				pointerEvents="none"
+			/>
+		</g>
+	);
+};
+ImageAnnotation.displayName = 'ImageAnnotation';
+ImageAnnotation = memo(ImageAnnotation);
+type ImageAnnotationProps = {
+	annotation: DisplayedAnnotation;
+	selected: boolean;
+	onPointerDown?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onPointerUp?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onContextMenu?: (annotation: DisplayedAnnotation, event: React.MouseEvent) => void;
+};
+
+// Ink annotation component
+let InkAnnotation: React.FC<InkAnnotationProps> = (props) => {
+	let { annotation, selected, onPointerDown, onPointerUp, onContextMenu } = props;
+	
+	// Get position data from annotation
+	const positionData = (annotation as any)._positionData;
+	if (!positionData || !positionData.paths || !positionData.paths[0] || positionData.paths[0].length < 4) {
+		return null;
+	}
+	
+	const path = positionData.paths[0];
+	const width = positionData.width || 2;
+	const doc = annotation.range.commonAncestorContainer.ownerDocument;
+	if (!doc || !doc.defaultView) {
+		return null;
+	}
+	
+	// Build SVG path string
+	let pathData = `M ${path[0]} ${path[1]}`;
+	for (let i = 2; i < path.length; i += 2) {
+		pathData += ` L ${path[i]} ${path[i + 1]}`;
+	}
+	
+	return (
+		<g
+			data-annotation-id={annotation.id}
+			style={{ pointerEvents: 'auto' }}
+			onPointerDown={onPointerDown && (event => onPointerDown!(annotation, event))}
+			onPointerUp={onPointerUp && (event => onPointerUp!(annotation, event))}
+			onContextMenu={onContextMenu && (event => onContextMenu!(annotation, event))}
+		>
+			{/* Invisible thicker stroke for easier clicking */}
+			<path
+				d={pathData}
+				fill="none"
+				stroke="transparent"
+				strokeWidth={Math.max(width * 3, 8)}
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				pointerEvents="stroke"
+			/>
+			{/* Visible stroke */}
+			<path
+				d={pathData}
+				fill="none"
+				stroke={annotation.color || '#000000'}
+				strokeWidth={width}
+				strokeLinecap="round"
+				strokeLinejoin="round"
+				opacity={selected ? 1 : 0.8}
+				pointerEvents="none"
+			/>
+		</g>
+	);
+};
+InkAnnotation.displayName = 'InkAnnotation';
+InkAnnotation = memo(InkAnnotation);
+type InkAnnotationProps = {
+	annotation: DisplayedAnnotation;
+	selected: boolean;
+	onPointerDown?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onPointerUp?: (annotation: DisplayedAnnotation, event: React.PointerEvent) => void;
+	onContextMenu?: (annotation: DisplayedAnnotation, event: React.MouseEvent) => void;
+};
+
 type AnnotationOverlayProps = {
 	iframe: HTMLIFrameElement;
 	annotations: DisplayedAnnotation[];
@@ -216,6 +960,7 @@ type AnnotationOverlayProps = {
 	onDragStart: (id: string, dataTransfer: DataTransfer) => void;
 	onResizeStart: (id: string) => void;
 	onResizeEnd: (id: string, range: Range, cancelled: boolean) => void;
+	onTextChange?: (id: string, text: string) => void;
 };
 
 let HighlightOrUnderline: React.FC<HighlightOrUnderlineProps> = (props) => {

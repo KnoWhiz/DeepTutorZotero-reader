@@ -230,9 +230,11 @@ export class KeyboardManager {
 		}
 		else if (['Delete', 'Backspace'].includes(key)) {
 			// Prevent the deletion of annotations when they are selected and the focus is within
-			// an input or label popup. Normally, the focus should not be inside an input unless
+			// an input, textarea, or label popup. Normally, the focus should not be inside an input unless
 			// it is within a label popup, which needs to indicate the annotations being modified
-			if (event.target.closest('input, .label-popup')) {
+			// Also check activeElement to catch textareas in SVG foreignObjects
+			if (event.target.closest('input, textarea, .label-popup') 
+				|| (document.activeElement && (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.tagName === 'INPUT'))) {
 				return;
 			}
 			let selectedIDs = this._reader._state.selectedAnnotationIDs;

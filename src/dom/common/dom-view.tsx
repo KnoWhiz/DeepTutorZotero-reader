@@ -102,6 +102,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 
 	protected _annotationRenderRoot!: Root;
 
+
 	protected _lightTheme: Theme | null;
 
 	protected _darkTheme: Theme | null;
@@ -189,6 +190,14 @@ abstract class DOMView<State extends DOMViewState, Data> {
 		});
 		this._a11yVirtualCursorTarget = null;
 		this._a11yShouldFocusVirtualCursorTarget = false;
+
+		// Ensure _handleTextAnnotationChange is always defined (should be a class field, but ensure it's available)
+		if (typeof this._handleTextAnnotationChange !== 'function') {
+			console.error('[DOMView constructor] _handleTextAnnotationChange is not a function during initialization!', {
+				type: typeof this._handleTextAnnotationChange,
+				hasMethod: '_handleTextAnnotationChange' in this
+			});
+		}
 
 		this._iframe = document.createElement('iframe');
 		this._iframe.sandbox.add('allow-same-origin', 'allow-modals');
@@ -596,21 +605,42 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	}
 
 	protected _renderAnnotations(synchronous = false) {
+		console.log('[DOMView._renderAnnotations] Called', {
+			synchronous,
+			hasAnnotationRenderRootEl: !!this._annotationRenderRootEl,
+			showAnnotations: this._showAnnotations,
+			annotationsCount: this._annotations.length
+		});
 		if (!this._annotationRenderRootEl) {
+			console.warn('[DOMView._renderAnnotations] Early return: _annotationRenderRootEl is missing');
 			return;
 		}
 		if (!this._showAnnotations) {
+			console.log('[DOMView._renderAnnotations] Early return: _showAnnotations is false');
 			this._annotationRenderRootEl.replaceChildren();
 			return;
 		}
 		let displayedAnnotations: DisplayedAnnotation[] = this._annotations.map((annotation) => {
-			if (this._displayedAnnotationCache.has(annotation)) {
-				return this._displayedAnnotationCache.get(annotation)!;
+			// Check if we have a cached version, but verify it's still valid
+			// (annotation properties like comment might have changed)
+			let cached = this._displayedAnnotationCache.get(annotation);
+			if (cached) {
+				// If comment, text, color, or readOnly changed, invalidate cache
+				if (cached.comment !== annotation.comment
+						|| cached.text !== annotation.text
+						|| cached.color !== annotation.color
+						|| cached.readOnly !== annotation.readOnly) {
+					this._displayedAnnotationCache.delete(annotation);
+					cached = undefined;
+				}
+			}
+			if (cached) {
+				return cached;
 			}
 
 			let range = this.toDisplayedRange(annotation.position);
 			if (!range) return null;
-			let displayedAnnotation = {
+			let displayedAnnotation: any = {
 				id: annotation.id,
 				type: annotation.type,
 				color: annotation.color,
@@ -621,6 +651,10 @@ abstract class DOMView<State extends DOMViewState, Data> {
 				key: annotation.id,
 				range,
 			};
+			// Copy _positionData for text/image/ink annotations (used for absolute positioning)
+			if ((annotation as any)._positionData) {
+				displayedAnnotation._positionData = (annotation as any)._positionData;
+			}
 			this._displayedAnnotationCache.set(annotation, displayedAnnotation);
 			return displayedAnnotation;
 		}).filter(a => !!a) as DisplayedAnnotation[];
@@ -645,7 +679,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 		if (this._previewAnnotation) {
 			let range = this.toDisplayedRange(this._previewAnnotation.position);
 			if (range) {
-				displayedAnnotations.push({
+				let previewDisplayed: any = {
 					sourceID: this._draggingNoteAnnotation?.id,
 					type: this._previewAnnotation.type,
 					color: this._previewAnnotation.color,
@@ -654,7 +688,12 @@ abstract class DOMView<State extends DOMViewState, Data> {
 					comment: this._previewAnnotation.comment,
 					key: '_previewAnnotation',
 					range,
-				});
+				};
+				// Copy _positionData for text annotations
+				if ((this._previewAnnotation as any)._positionData) {
+					previewDisplayed._positionData = (this._previewAnnotation as any)._positionData;
+				}
+				displayedAnnotations.push(previewDisplayed);
 			}
 		}
 
@@ -663,6 +702,33 @@ abstract class DOMView<State extends DOMViewState, Data> {
 				|| isPageRectVisible(this._getBoundingPageRectCached(a.range), this._iframeWindow)
 		);
 
+		// Always pass onTextChange - it should always be defined as a class property
+		// Ensure it's a function, otherwise provide a no-op to ensure the prop is always defined
+		// IMPORTANT: Use console.error to make it more visible
+		console.error('[DOMView._renderAnnotations] ===== CHECKING _handleTextAnnotationChange =====', {
+			hasMethod: '_handleTextAnnotationChange' in this,
+			isFunction: typeof this._handleTextAnnotationChange === 'function',
+			type: typeof this._handleTextAnnotationChange,
+			value: this._handleTextAnnotationChange,
+			constructor: this.constructor.name,
+			keys: Object.keys(this).filter(k => k.includes('Text'))
+		});
+		const onTextChangeProp = typeof this._handleTextAnnotationChange === 'function' 
+			? this._handleTextAnnotationChange 
+			: ((id: string, text: string) => {
+				console.error('[DOMView._renderAnnotations] ===== ERROR: _handleTextAnnotationChange is NOT a function =====', {
+					hasMethod: '_handleTextAnnotationChange' in this,
+					type: typeof this._handleTextAnnotationChange,
+					value: this._handleTextAnnotationChange,
+					id,
+					text
+				});
+			});
+		console.error('[DOMView._renderAnnotations] onTextChangeProp created:', {
+			isFunction: typeof onTextChangeProp === 'function',
+			type: typeof onTextChangeProp
+		});
+		
 		let doRender = () => this._annotationRenderRoot.render(
 			<AnnotationOverlay
 				iframe={this._iframe}
@@ -674,6 +740,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 				onDragStart={this._handleAnnotationDragStart}
 				onResizeStart={this._handleAnnotationResizeStart}
 				onResizeEnd={this._handleAnnotationResizeEnd}
+				onTextChange={onTextChangeProp}
 			/>
 		);
 		if (synchronous) {
@@ -913,6 +980,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 		}
 		return range;
 	}
+
 
 	protected _handleClick(event: MouseEvent) {
 		let link = (event.target as Element).closest('a');
@@ -1220,7 +1288,47 @@ abstract class DOMView<State extends DOMViewState, Data> {
 		if (this._options.platform === 'web') {
 			return;
 		}
-		// Prevent native context menu
+		
+		console.log('[DOMView._handleContextMenu] Native contextmenu event:', {
+			target: event.target,
+			targetTagName: (event.target as Element)?.tagName,
+			clientX: event.clientX,
+			clientY: event.clientY,
+			hasAnnotationShadowRoot: !!this._annotationShadowRoot,
+		});
+		
+		// Check if the click is on an annotation FIRST
+		// If it is, let React's onContextMenu handlers handle it (they call preventDefault)
+		// If it's not, we handle it here
+		let target = event.target as Element;
+		let isOnAnnotation = false;
+		
+		if (target && this._annotationShadowRoot.contains(target)) {
+			// Target is in annotation shadow root - React handlers will handle it
+			console.log('[DOMView._handleContextMenu] Target is in annotation shadow root');
+			isOnAnnotation = true;
+		}
+		else {
+			// Check via elementsFromPoint as fallback
+			console.log('[DOMView._handleContextMenu] Checking elementsFromPoint...');
+			let annotationIDs = this._getAnnotationsAtPoint(event.clientX, event.clientY);
+			console.log('[DOMView._handleContextMenu] elementsFromPoint found annotationIDs:', annotationIDs);
+			if (annotationIDs.length > 0) {
+				isOnAnnotation = true;
+			}
+		}
+		
+		console.log('[DOMView._handleContextMenu] isOnAnnotation:', isOnAnnotation);
+		
+		if (isOnAnnotation) {
+			// Let React's onContextMenu handlers handle annotation context menus
+			// They will call preventDefault() to prevent the browser menu
+			console.log('[DOMView._handleContextMenu] Returning early - letting React handlers handle annotation context menu');
+			return;
+		}
+		
+		// Not on an annotation - handle view context menu
+		console.log('[DOMView._handleContextMenu] Not on annotation - opening view context menu');
 		event.preventDefault();
 		let br = this._iframe.getBoundingClientRect();
 		let overlay = this._getContextMenuOverlay(event.target as Element);
@@ -1252,7 +1360,15 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	}
 
 	private _handleAnnotationContextMenu = (id: string, event: React.MouseEvent) => {
+		console.log('[DOMView._handleAnnotationContextMenu] React onContextMenu handler called:', {
+			id,
+			clientX: event.clientX,
+			clientY: event.clientY,
+			target: event.target,
+		});
+		
 		if (this._selectionContainsPoint(event.clientX, event.clientY)) {
+			console.log('[DOMView._handleAnnotationContextMenu] Selection contains point, returning');
 			return;
 		}
 
@@ -1261,6 +1377,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 
 		let br = this._iframe.getBoundingClientRect();
 		if (this._selectedAnnotationIDs.includes(id)) {
+			console.log('[DOMView._handleAnnotationContextMenu] Annotation is selected, opening context menu for selected annotations:', this._selectedAnnotationIDs);
 			this._options.onOpenAnnotationContextMenu({
 				ids: this._selectedAnnotationIDs,
 				x: br.x + event.clientX * this._iframeCoordScaleFactor,
@@ -1269,6 +1386,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 			});
 		}
 		else {
+			console.log('[DOMView._handleAnnotationContextMenu] Annotation not selected, selecting and opening context menu');
 			this._options.onSelectAnnotations([id], event.nativeEvent);
 			this._options.onOpenAnnotationContextMenu({
 				ids: [id],
@@ -1442,6 +1560,23 @@ abstract class DOMView<State extends DOMViewState, Data> {
 		this._preventNextClickEvent();
 	};
 
+	private _handleTextAnnotationChange = (id: string, text: string) => {
+		// Update the annotation's comment (text content) when user types
+		console.log('[DOMView._handleTextAnnotationChange] Saving text annotation:', {
+			id,
+			text,
+			textLength: text.length,
+			hasOnUpdateAnnotations: !!this._options.onUpdateAnnotations,
+			onUpdateAnnotationsType: typeof this._options.onUpdateAnnotations
+		});
+		if (this._options.onUpdateAnnotations) {
+		this._options.onUpdateAnnotations([{ id, comment: text }]);
+		} else {
+			console.error('[DOMView._handleTextAnnotationChange] onUpdateAnnotations is not available!');
+					}
+	};
+
+
 	protected _handleCopy(event: ClipboardEvent) {
 		if (!event.clipboardData) {
 			return;
@@ -1468,6 +1603,26 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	}
 
 	protected _handlePointerDown(event: PointerEvent) {
+		// Check if clicking on a text annotation textarea - if so, let it handle the event
+		const target = event.target as Element;
+		const isTextAnnotationTextarea = target.tagName === 'TEXTAREA' 
+			|| target.closest('textarea')
+			|| target.closest('[data-annotation-id]')?.querySelector('textarea');
+		
+		console.log('[DOMView._handlePointerDown] Pointer down captured:', {
+			targetTagName: target.tagName,
+			targetNodeName: target.nodeName,
+			isTextAnnotationTextarea: !!isTextAnnotationTextarea,
+			isInAnnotationShadowRoot: this._annotationShadowRoot?.contains(target),
+			toolType: this._tool?.type
+		});
+		
+		// If clicking on a text annotation textarea, don't interfere - let React handle it
+		if (isTextAnnotationTextarea && this._annotationShadowRoot?.contains(target)) {
+			console.log('[DOMView._handlePointerDown] Text annotation textarea clicked - allowing event to propagate');
+			return; // Don't process, let React handlers receive the event
+		}
+		
 		if ((event.buttons & 1) === 1 && event.isPrimary) {
 			this._gotPointerUp = false;
 			this._pointerMovedWhileDown = false;
@@ -1506,6 +1661,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 
 			return;
 		}
+
 
 		if (event.target !== this._annotationShadowRoot.host) {
 			// Deselect annotations when clicking outside the annotation layer
@@ -1714,8 +1870,10 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	// ***
 
 	setTool(tool: Tool) {
+		console.log('[DOMView.setTool] ENTER, tool type:', tool?.type);
 		this._tool = tool;
 
+		console.log('[DOMView.setTool] Setting dataset.tool');
 		this._iframeDocument.body.dataset.tool = tool.type;
 
 		// When highlighting or underlining, we draw a preview annotation during selection, so set the browser's
@@ -1725,12 +1883,15 @@ abstract class DOMView<State extends DOMViewState, Data> {
 			// 50% opacity, like annotations -- not needed if we're using a system color
 			selectionColor += '80';
 		}
+		console.log('[DOMView.setTool] Setting selection color');
 		this._iframeDocument.documentElement.style.setProperty('--selection-color', selectionColor);
 
 		if (this._previewAnnotation && tool.type !== 'note') {
 			this._previewAnnotation = null;
 		}
+		console.log('[DOMView.setTool] About to call _renderAnnotations');
 		this._renderAnnotations();
+		console.log('[DOMView.setTool] EXIT');
 	}
 
 	setAnnotations(annotations: WADMAnnotation[]) {
@@ -1748,12 +1909,42 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	}
 
 	setLightTheme(theme: Theme | null) {
+		function debugLog(...args: any[]) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && (window as any).parent && (window as any).parent !== window) {
+					if ((window as any).parent.Zotero && (window as any).parent.Zotero.debug) {
+						(window as any).parent.Zotero.debug('[DOMView] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		debugLog('[DOMView.setLightTheme] Called:', theme?.id, theme);
 		this._lightTheme = theme;
+		// Update color scheme to "light" when a light theme is set, so _updateColorScheme applies it
+		if (theme) {
+			this._colorScheme = 'light';
+		}
 		this._updateColorScheme();
 	}
 
 	setDarkTheme(theme: Theme | null) {
+		function debugLog(...args: any[]) {
+			console.log(...args);
+			try {
+				if (typeof window !== 'undefined' && (window as any).parent && (window as any).parent !== window) {
+					if ((window as any).parent.Zotero && (window as any).parent.Zotero.debug) {
+						(window as any).parent.Zotero.debug('[DOMView] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+					}
+				}
+			} catch (e) {}
+		}
+		debugLog('[DOMView.setDarkTheme] Called:', theme?.id, theme);
 		this._darkTheme = theme;
+		// Update color scheme to "dark" when a dark theme is set, so _updateColorScheme applies it
+		if (theme) {
+			this._colorScheme = 'dark';
+		}
 		this._updateColorScheme();
 	}
 

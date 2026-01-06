@@ -4,6 +4,7 @@ import ReaderUI from './components/reader-ui';
 import PDFView from '../pdf/pdf-view';
 import EPUBView from '../dom/epub/epub-view';
 import SnapshotView from '../dom/snapshot/snapshot-view';
+import DOCXView from '../docx/docx-view';
 import AnnotationManager from './annotation-manager';
 import {
 	createAnnotationContextMenu,
@@ -26,6 +27,22 @@ import { debounce } from './lib/debounce';
 import { flushSync } from 'react-dom';
 import { getLocalizedString } from '../fluent';
 
+// Debug helper that logs to both iframe console and parent console (if available)
+function debugLog(...args) {
+	console.log(...args);
+	// Try to also log to parent console via Zotero if available
+	try {
+		if (typeof window !== 'undefined' && window.parent && window.parent !== window) {
+			// Try to access parent's Zotero
+			if (window.parent.Zotero && window.parent.Zotero.debug) {
+				window.parent.Zotero.debug('[Reader] ' + args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '));
+			}
+		}
+	} catch (e) {
+		// Cross-origin or other error, ignore
+	}
+}
+
 // Compute style values for usage in views (CSS variables aren't sufficient for that)
 // Font family is necessary for text annotations
 window.computedFontFamily = window.getComputedStyle(document.body).getPropertyValue('font-family');
@@ -36,6 +53,18 @@ export const ReaderContext = createContext({});
 
 class Reader {
 	constructor(options) {
+		console.log('[Reader] CONSTRUCTOR STARTING');
+		console.log('[Reader] options.type:', options.type);
+		console.log('[Reader] window._reader before:', !!window._reader);
+		console.log('[Reader] window.createReader exists:', typeof window.createReader);
+		console.log('[Reader] window.setFindQueryWhenReady exists:', typeof window.setFindQueryWhenReady);
+		console.log('[Reader] window.location:', window.location?.href);
+		
+		// Set window._reader EARLY so it's available even if _updateState blocks
+		// This allows setFindQueryWhenReady to access the reader during initialization
+		window._reader = this;
+		console.log('[Reader] window._reader SET EARLY');
+		
 		window.rtl = options.rtl;
 		document.getElementsByTagName("html")[0].dir = options.rtl ? 'rtl' : 'ltr';
 
@@ -220,6 +249,7 @@ class Reader {
 			this._state.secondaryViewState = state;
 		}
 
+		console.log('[Reader] CHECKPOINT 1: Creating FocusManager');
 		this._focusManager = new FocusManager({
 			reader: this,
 			onDeselectAnnotations: () => {
@@ -233,10 +263,12 @@ class Reader {
 			}
 		});
 
+		console.log('[Reader] CHECKPOINT 2: Creating KeyboardManager');
 		this._keyboardManager = new KeyboardManager({
 			reader: this
 		});
 
+		console.log('[Reader] CHECKPOINT 3: Creating AnnotationManager');
 		this._annotationManager = new AnnotationManager({
 			readOnly: this._state.readOnly,
 			authorName: options.authorName,
@@ -262,10 +294,22 @@ class Reader {
 			delete options.location;
 		}
 
-		this._primaryView = this._createView(true, options.location);
+		console.log('[Reader] CHECKPOINT 4: About to create primary view');
+		try {
+			this._primaryView = this._createView(true, options.location);
+			console.log('[Reader] CHECKPOINT 5: Primary view created successfully');
+		} catch (e) {
+			console.error('Failed to create primary view:', e);
+			this.setErrorMessage(`Failed to load document: ${e.message}`);
+			throw e;
+		}
 
 		if (selectAnnotationID) {
 			(async () => {
+				if (!this._primaryView) {
+					console.error('_primaryView is null, cannot await initializedPromise');
+					return;
+				}
 				await this._primaryView.initializedPromise;
 				this.setSelectedAnnotations([selectAnnotationID]);
 			})();
@@ -286,7 +330,10 @@ class Reader {
 						onNavigateBack={this.navigateBack.bind(this)}
 						onNavigateToPreviousPage={this.navigateToPreviousPage.bind(this)}
 						onNavigateToNextPage={this.navigateToNextPage.bind(this)}
-						onChangePageNumber={pageNumber => this._lastView.navigate({ pageNumber })}
+						onChangePageNumber={pageNumber => {
+						const view = this._getLastViewSafe();
+						if (view) view.navigate({ pageNumber });
+					}}
 						onChangeTool={this.setTool.bind(this)}
 						onToggleAppearancePopup={this.toggleAppearancePopup.bind(this)}
 						onToggleFind={this.toggleFindPopup.bind(this)}
@@ -301,21 +348,62 @@ class Reader {
 							this._onChangeSidebarWidth(width);
 						}}
 						onChangeTheme={(theme) => {
-							if (getCurrentColorScheme(this._state.colorScheme) === 'dark') {
-								// For Zotero client use prefs to change theme
+							const currentColorScheme = getCurrentColorScheme(this._state.colorScheme);
+							debugLog('[Reader.onChangeTheme] Theme selected:', theme, 'Current color scheme:', currentColorScheme);
+							
+							// Determine if theme should be applied to light or dark slot
+							// Look up the theme object to check its background color
+							let themes = [...DEFAULT_THEMES, ...(this._state.customThemes || [])];
+							themes = new Map(themes.map(t => [t.id, t]));
+							let themeObj = theme ? themes.get(theme) : null;
+							
+							// Determine if theme is light or dark based on background color
+							// Calculate luminance: L = 0.299*R + 0.587*G + 0.114*B
+							let isDarkTheme = false;
+							if (themeObj && themeObj.background) {
+								const hex = themeObj.background.replace('#', '');
+								const r = parseInt(hex.substr(0, 2), 16);
+								const g = parseInt(hex.substr(2, 2), 16);
+								const b = parseInt(hex.substr(4, 2), 16);
+								const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+								isDarkTheme = luminance < 0.5; // Dark if luminance < 50%
+							} else if (theme === 'dark') {
+								// Special case: 'dark' theme is always dark
+								isDarkTheme = true;
+							}
+							
+							debugLog('[Reader.onChangeTheme] Theme type determined:', { isDarkTheme, themeId: theme, backgroundColor: themeObj?.background });
+							
+							if (isDarkTheme) {
+								// Apply to dark theme slot
+								// Always update the reader state immediately for dynamic updates
+								debugLog('[Reader.onChangeTheme] Calling setDarkTheme directly');
+								this.setDarkTheme(theme);
+								// Also call the callback to persist to preferences (for Zotero client)
 								if (this._onSetDarkTheme) {
-									this._onSetDarkTheme(theme);
-								}
-								else {
-									this.setDarkTheme(theme);
+									debugLog('[Reader.onChangeTheme] Also calling _onSetDarkTheme callback for persistence');
+									if (theme) {
+										this._onSetDarkTheme(theme);
+									}
+									else {
+										this._onSetDarkTheme(false);
+									}
 								}
 							}
 							else {
+								// Apply to light theme slot
+								// Always update the reader state immediately for dynamic updates
+								debugLog('[Reader.onChangeTheme] Calling setLightTheme directly');
+								this.setLightTheme(theme);
+								// Also call the callback to persist to preferences (for Zotero client)
 								if (this._onSetLightTheme) {
-									this._onSetLightTheme(theme);
-								}
-								else {
-									this.setLightTheme(theme);
+									debugLog('[Reader.onChangeTheme] Also calling _onSetLightTheme callback for persistence');
+									if (theme) {
+										this._onSetLightTheme(theme);
+									}
+									else {
+										this._onSetLightTheme(false);
+									}
 								}
 							}
 						}}
@@ -341,7 +429,12 @@ class Reader {
 						onDeleteAnnotations={this._annotationManager.deleteAnnotations.bind(this._annotationManager)}
 						onOpenTagsPopup={this._onOpenTagsPopup}
 						onOpenPageLabelPopup={this._handleOpenPageLabelPopup.bind(this)}
-						onOpenColorContextMenu={params => this._onOpenContextMenu(createColorContextMenu(this, params))}
+						onOpenColorContextMenu={(params) => {
+							debugLog('[Reader] onOpenColorContextMenu called with params:', params);
+							const menuParams = createColorContextMenu(this, params);
+							debugLog('[Reader] onOpenColorContextMenu created menu params:', { x: menuParams.x, y: menuParams.y, itemGroupsCount: menuParams.itemGroups?.length });
+							this.openContextMenu(menuParams);
+						}}
 						onOpenAnnotationContextMenu={params => this._onOpenContextMenu(createAnnotationContextMenu(this, params))}
 						onOpenSelectorContextMenu={params => this._onOpenContextMenu(createSelectorContextMenu(this, params))}
 						onOpenThumbnailContextMenu={params => this._onOpenContextMenu(createThumbnailContextMenu(this, params))}
@@ -401,7 +494,9 @@ class Reader {
 			);
 		}
 
+		console.log('[Reader] CHECKPOINT 6: About to call _updateState');
 		this._updateState(this._state, true);
+		console.log('[Reader] CHECKPOINT 7: _updateState completed');
 
 		// window.addEventListener("wheel", event => {
 		// 	const delta = Math.sign(event.deltaY);
@@ -416,6 +511,15 @@ class Reader {
 				}
 			});
 		}
+		console.log('[Reader] CHECKPOINT 8: Event listeners added');
+		
+		console.log('[Reader] CONSTRUCTOR COMPLETED');
+		console.log('[Reader] this._type:', this._type);
+		// Check window._reader after a small delay to see if it gets set
+		setTimeout(() => {
+			console.log('[Reader] After 100ms - window._reader exists:', !!window._reader);
+			console.log('[Reader] After 100ms - window._reader === this:', window._reader === this);
+		}, 100);
 	}
 
 	_ensureType() {
@@ -425,29 +529,85 @@ class Reader {
 	}
 
 	get _lastView() {
-		return this._lastViewPrimary ? this._primaryView : this._secondaryView;
+		const view = this._lastViewPrimary ? this._primaryView : this._secondaryView;
+		if (!view) {
+			const viewName = this._lastViewPrimary ? '_primaryView' : '_secondaryView';
+			console.error(`_lastView getter: ${viewName} is null`);
+			throw new Error(`${viewName} is null - view was not created successfully`);
+		}
+		return view;
+	}
+
+	// Helper method to safely get the last view, returns null if view doesn't exist
+	_getLastViewSafe() {
+		try {
+			return this._lastView;
+		} catch (e) {
+			console.error('_getLastViewSafe: view is not available', e);
+			return null;
+		}
 	}
 
 	_updateState(state, init) {
+		if (init) console.log('[Reader._updateState] STARTING (init=true)');
 		let previousState = this._state;
 
-		this._state = { ...this._state, ...state };
-		this._readerRef.current?.setState(this._state);
+		// Debug: Log what's being updated
+		const updatedKeys = Object.keys(state);
+		if (updatedKeys.length > 0 && !init) {
+			debugLog('[Reader._updateState] Updating state:', updatedKeys, {
+				lightTheme: state.lightTheme?.id || state.lightTheme,
+				darkTheme: state.darkTheme?.id || state.darkTheme,
+				tool: state.tool?.type || state.tool,
+				colorScheme: state.colorScheme,
+				contextMenu: state.contextMenu ? { x: state.contextMenu.x, y: state.contextMenu.y, itemGroupsCount: state.contextMenu.itemGroups?.length } : null
+			});
+		}
 
+		if (init) console.log('[Reader._updateState] STEP A: merging state');
+		this._state = { ...this._state, ...state };
+		
+		if (init) console.log('[Reader._updateState] STEP B: updating React');
+		// Debug: Log React state update
+		if (this._readerRef.current) {
+			debugLog('[Reader._updateState] Calling React setState, ref exists:', !!this._readerRef.current);
+			this._readerRef.current?.setState(this._state);
+		} else {
+			debugLog('[Reader._updateState] Reader ref is null, cannot update React state');
+		}
+		if (init) console.log('[Reader._updateState] STEP C: React updated');
+
+		if (init) console.log('[Reader._updateState] STEP C1: checking annotations');
 		if (this._state.annotations !== previousState.annotations) {
+			if (init) console.log('[Reader._updateState] STEP C1a: calling setAnnotations');
 			let annotations = this._state.annotations.filter(x => !x._hidden);
 			this._primaryView?.setAnnotations(annotations);
 			this._secondaryView?.setAnnotations(annotations);
+			if (init) console.log('[Reader._updateState] STEP C1b: setAnnotations done');
 		}
 
+		if (init) console.log('[Reader._updateState] STEP C2: checking selectedAnnotationIDs');
 		if (this._state.selectedAnnotationIDs !== previousState.selectedAnnotationIDs) {
 			this._primaryView?.setSelectedAnnotationIDs(this._state.selectedAnnotationIDs);
 			this._secondaryView?.setSelectedAnnotationIDs(this._state.selectedAnnotationIDs);
 		}
 
+		if (init) console.log('[Reader._updateState] STEP C3: checking tool');
 		if (this._state.tool !== previousState.tool) {
+			if (init) console.log('[Reader._updateState] STEP C3a: tool changed, primaryView exists:', !!this._primaryView);
+			debugLog('[Reader._updateState] Tool changed:', {
+				previous: previousState.tool?.type,
+				current: this._state.tool?.type,
+				previousColor: previousState.tool?.color,
+				currentColor: this._state.tool?.color,
+				primaryView: !!this._primaryView,
+				secondaryView: !!this._secondaryView
+			});
+			if (init) console.log('[Reader._updateState] STEP C3b: about to call primaryView.setTool');
 			this._primaryView?.setTool(this._state.tool);
+			if (init) console.log('[Reader._updateState] STEP C3c: primaryView.setTool done');
 			this._secondaryView?.setTool(this._state.tool);
+			if (init) console.log('[Reader._updateState] STEP C3d: secondaryView.setTool done');
 		}
 
 		if (this._state.showAnnotations !== previousState.showAnnotations) {
@@ -460,15 +620,35 @@ class Reader {
 			this._secondaryView?.setOutline(this._state.outline);
 		}
 
-		if (init || this._state.lightTheme !== previousState.lightTheme) {
+		// Compare by theme ID to detect changes even if object reference is the same
+		let lightThemeChanged = init || 
+			(this._state.lightTheme?.id !== previousState.lightTheme?.id) ||
+			(this._state.lightTheme !== previousState.lightTheme);
+		if (lightThemeChanged) {
 			if (!init) {
+				debugLog('[Reader._updateState] Light theme changed:', {
+					previous: previousState.lightTheme?.id,
+					current: this._state.lightTheme?.id,
+					primaryView: !!this._primaryView,
+					secondaryView: !!this._secondaryView
+				});
 				this._primaryView?.setLightTheme(this._state.lightTheme);
 				this._secondaryView?.setLightTheme(this._state.lightTheme);
 			}
 		}
 
-		if (init || this._state.darkTheme !== previousState.darkTheme) {
+		// Compare by theme ID to detect changes even if object reference is the same
+		let darkThemeChanged = init || 
+			(this._state.darkTheme?.id !== previousState.darkTheme?.id) ||
+			(this._state.darkTheme !== previousState.darkTheme);
+		if (darkThemeChanged) {
 			if (!init) {
+				debugLog('[Reader._updateState] Dark theme changed:', {
+					previous: previousState.darkTheme?.id,
+					current: this._state.darkTheme?.id,
+					primaryView: !!this._primaryView,
+					secondaryView: !!this._secondaryView
+				});
 				this._primaryView?.setDarkTheme(this._state.darkTheme);
 				this._secondaryView?.setDarkTheme(this._state.darkTheme);
 			}
@@ -526,30 +706,45 @@ class Reader {
 			this._secondaryView?.setFindState(this._state.secondaryViewFindState);
 		}
 
-		if (this._type === 'epub' || this._type === 'snapshot') {
+		if (init) console.log('[Reader._updateState] STEP C4: entering fontFamily/hyphenate block, type:', this._type);
+		if (this._type === 'epub' || this._type === 'docx' || this._type === 'snapshot') {
 			if (this._state.fontFamily !== previousState.fontFamily) {
+				if (init) console.log('[Reader._updateState] STEP C4a: fontFamily changed, calling setFontFamily');
 				this._primaryView?.setFontFamily(this._state.fontFamily);
 				this._secondaryView?.setFontFamily(this._state.fontFamily);
+				if (init) console.log('[Reader._updateState] STEP C4b: setFontFamily done');
 			}
 
 			if (this._state.hyphenate !== previousState.hyphenate) {
+				if (init) console.log('[Reader._updateState] STEP C4c: hyphenate changed, calling setHyphenate');
 				this._primaryView?.setHyphenate(this._state.hyphenate);
 				this._secondaryView?.setHyphenate(this._state.hyphenate);
+				if (init) console.log('[Reader._updateState] STEP C4d: setHyphenate done');
 			}
 		}
+		if (init) console.log('[Reader._updateState] STEP C5: exiting fontFamily/hyphenate block');
 
+		if (init) console.log('[Reader._updateState] STEP C6: checking sidebarView');
 		if (init || this._state.sidebarView !== previousState.sidebarView) {
+			if (init) console.log('[Reader._updateState] STEP C6a: calling setSidebarView');
 			this._primaryView?.setSidebarView?.(this._state.sidebarView);
 			this._secondaryView?.setSidebarView?.(this._state.sidebarView);
+			if (init) console.log('[Reader._updateState] STEP C6b: setSidebarView done');
 		}
 
+		if (init) console.log('[Reader._updateState] STEP C7: checking sidebarOpen');
 		if (init || this._state.sidebarOpen !== previousState.sidebarOpen) {
+			if (init) console.log('[Reader._updateState] STEP C7a: toggling sidebar-open class');
 			document.body.classList.toggle('sidebar-open', this._state.sidebarOpen);
-			this._primaryView?.setSidebarOpen(this._state.sidebarOpen);
+			if (init) console.log('[Reader._updateState] STEP C7b: calling setSidebarOpen');
+			this._primaryView?.setSidebarOpen(this._state.sidebarOpen); //Causing blocking of DOCX Reader
 			this._secondaryView?.setSidebarOpen(this._state.sidebarOpen);
+			if (init) console.log('[Reader._updateState] STEP C7c: setSidebarOpen done');
 		}
 
+		if (init) console.log('🔴🔴🔴 [Reader._updateState] STEP D: before splitType check 🔴🔴🔴');
 		if (init || this._state.splitType !== previousState.splitType) {
+			if (init) console.log('[Reader._updateState] STEP D1: splitType condition met');
 			document.body.classList.remove('enable-horizontal-split-view');
 			document.body.classList.remove('enable-vertical-split-view');
 			// Split
@@ -560,7 +755,12 @@ class Reader {
 						: 'enable-horizontal-split-view'
 				);
 				this._updateState({ secondaryViewState: { ...this._state.primaryViewState } });
-				this._secondaryView = this._createView(false);
+				try {
+					this._secondaryView = this._createView(false);
+				} catch (e) {
+					console.error('Failed to create secondary view:', e);
+					this._secondaryView = null;
+				}
 			}
 			// Unsplit
 			else if ((previousState.splitType || init) && !this._state.splitType) {
@@ -611,6 +811,8 @@ class Reader {
 				document.body.classList.remove('freeze');
 			}
 		}
+		if (init) console.log('✅✅✅ [Reader._updateState] COMPLETED (init=true) ✅✅✅');
+		if (init) this._constructorCompleted = true;
 	}
 
 	disableSplitView() {
@@ -646,16 +848,31 @@ class Reader {
 	}
 
 	setTool(params) {
+		debugLog('[Reader.setTool] Called with params:', params);
 		if (this._state.readOnly && !['pointer', 'hand'].includes(params.type)) {
+			debugLog('[Reader.setTool] Read-only mode, ignoring tool change');
 			return;
 		}
 		let tool = this._state.tool;
 		if (params.type && tool.type !== params.type) {
 			tool = this._tools[params.type];
 		}
+		// Create a new tool object to ensure reference changes, so _updateState detects the change
+		// This is important when only color or other properties change (not the type)
+		// Match PDF behavior: always create a new object reference
+		tool = { ...tool };
 		for (let key in params) {
 			tool[key] = params[key];
 		}
+		// Update the corresponding tool in _tools to persist color changes
+		// This ensures that when switching tools and back, the color is maintained
+		if (this._tools[tool.type] && !['pointer', 'hand'].includes(tool.type)) {
+			this._tools[tool.type] = { ...this._tools[tool.type] };
+			for (let key in params) {
+				this._tools[tool.type][key] = params[key];
+			}
+		}
+		debugLog('[Reader.setTool] Final tool object:', tool);
 		this._updateState({ tool });
 		if (!['pointer', 'hand'].includes(tool.type)) {
 			this.setSelectedAnnotations([]);
@@ -726,8 +943,11 @@ class Reader {
 	}
 
 	openContextMenu(params) {
+		console.log('[Reader.openContextMenu] Called with params:', params);
 		this._onBringReaderToFront?.(true);
+		console.log('[Reader.openContextMenu] About to call _updateState with contextMenu:', { x: params.x, y: params.y, itemGroupsCount: params.itemGroups?.length });
 		this._updateState({ contextMenu: params });
+		console.log('[Reader.openContextMenu] _updateState called, checking if state was updated:', { hasContextMenu: !!this._state.contextMenu });
 		setTimeout(() => {
 			window.focus();
 			document.activeElement.blur();
@@ -815,7 +1035,10 @@ class Reader {
 		}
 		this._updateState({ [key]: open });
 		if (!open) {
-			this._lastView.focus();
+			const view = this._getLastViewSafe();
+			if (view) {
+				view.focus();
+			}
 		}
 	}
 
@@ -977,7 +1200,16 @@ class Reader {
 		};
 
 		let onOpenAnnotationContextMenu = (params) => {
-			this._onOpenContextMenu(createAnnotationContextMenu(this, params));
+			console.log('[Reader.onOpenAnnotationContextMenu] Called with params:', params);
+			let menuParams = createAnnotationContextMenu(this, params);
+			console.log('[Reader.onOpenAnnotationContextMenu] Created menu params:', { 
+				x: menuParams.x, 
+				y: menuParams.y, 
+				itemGroupsCount: menuParams.itemGroups?.length,
+				internal: menuParams.internal
+			});
+			this.openContextMenu(menuParams);
+			console.log('[Reader.onOpenAnnotationContextMenu] Called openContextMenu');
 		};
 
 		let onOpenViewContextMenu = (params) => {
@@ -990,6 +1222,13 @@ class Reader {
 		};
 
 		let onSetAnnotationPopup = (annotationPopup) => {
+			debugLog('[Reader.onSetAnnotationPopup] Called:', {
+				primary,
+				hasAnnotation: !!annotationPopup,
+				annotationId: annotationPopup?.annotation?.id,
+				annotationType: annotationPopup?.annotation?.type,
+				hasRect: !!annotationPopup?.rect
+			});
 			this._updateState({ [primary ? 'primaryViewAnnotationPopup' : 'secondaryViewAnnotationPopup']: annotationPopup });
 		};
 
@@ -1049,8 +1288,11 @@ class Reader {
 		};
 
 		let data;
-		if (this._type === 'pdf') {
+		if (this._type === 'pdf' || this._type === 'docx') {
 			data = this._data;
+			if (!data && this._type === 'docx') {
+				console.error('DOCX: this._data is undefined');
+			}
 		}
 		else if (this._primaryView) {
 			data = this._primaryView.getData();
@@ -1058,6 +1300,10 @@ class Reader {
 		else {
 			data = this._data;
 			delete this._data;
+		}
+
+		if (this._type === 'docx' && !data) {
+			throw new Error('DOCX: data is required but is undefined');
 		}
 
 		let common = {
@@ -1103,26 +1349,31 @@ class Reader {
 		};
 
 		if (this._type === 'pdf') {
-			view = new PDFView({
-				...common,
-				password: this._password,
-				pageLabels: this._state.pageLabels,
-				onRequestPassword,
-				onSetThumbnails,
-				onSetPageLabels,
-				onDeleteAnnotations // For complete ink erase
-			});
-
-			if (primary) {
-				initPDFPrintService({
-					onProgress: (percent) => {
-						this._handleSetPrintPopup({ percent });
-					},
-					onFinish: () => {
-						this._handleSetPrintPopup(null);
-					},
-					pdfView: view
+			try {
+				view = new PDFView({
+					...common,
+					password: this._password,
+					pageLabels: this._state.pageLabels,
+					onRequestPassword,
+					onSetThumbnails,
+					onSetPageLabels,
+					onDeleteAnnotations // For complete ink erase
 				});
+
+				if (primary) {
+					initPDFPrintService({
+						onProgress: (percent) => {
+							this._handleSetPrintPopup({ percent });
+						},
+						onFinish: () => {
+							this._handleSetPrintPopup(null);
+						},
+						pdfView: view
+					});
+				}
+			} catch (e) {
+				console.error('Failed to create PDFView:', e);
+				throw e;
 			}
 		} else if (this._type === 'epub') {
 			view = new EPUBView({
@@ -1131,11 +1382,43 @@ class Reader {
 				hyphenate: this._state.hyphenate,
 				onEPUBEncrypted,
 			});
+		} else if (this._type === 'docx') {
+			console.debug('[DEBUG] Entered DOCX view creation block');
+			console.debug('[DEBUG] this._type:', this._type);
+			console.debug('[DEBUG] common.data:', common.data);
+			try {
+				if (!common.data) {
+					throw new Error('DOCX: common.data is undefined');
+				}
+				console.debug('[DEBUG] About to create DOCXView instance');
+				view = new DOCXView({
+					...common,
+					fontFamily: this._state.fontFamily,
+					hyphenate: this._state.hyphenate,
+				});
+				console.debug('[DEBUG] DOCXView created, view =', view);
+				if (!view) {
+					throw new Error('DOCXView constructor returned undefined');
+				}
+			} catch (e) {
+				console.error('Failed to create DOCXView:', e);
+				console.error('common.data:', common.data);
+				throw e;
+			}
 		} else if (this._type === 'snapshot') {
-			view = new SnapshotView({
-				...common,
-				onSetZoom
-			});
+			try {
+				view = new SnapshotView({
+					...common,
+					onSetZoom
+				});
+			} catch (e) {
+				console.error('Failed to create SnapshotView:', e);
+				throw e;
+			}
+		}
+
+		if (!view) {
+			throw new Error(`Failed to create view for type: ${this._type}. View constructor did not throw but view is undefined.`);
 		}
 
 		if (primary) {
@@ -1235,34 +1518,48 @@ class Reader {
 	}
 
 	zoomIn() {
-		this._lastView.zoomIn();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomIn();
 	}
 
 	zoomOut() {
-		this._lastView.zoomOut();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomOut();
 	}
 
 	zoomReset() {
-		this._lastView.zoomReset();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomReset();
 	}
 
 	zoomAuto() {
 		this._ensureType('pdf');
-		this._lastView.zoomAuto();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomAuto();
 	}
 
 	zoomPageWidth() {
 		this._ensureType('pdf');
-		this._lastView.zoomPageWidth();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomPageWidth();
 	}
 
 	zoomPageHeight() {
 		this._ensureType('pdf');
-		this._lastView.zoomPageHeight();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.zoomPageHeight();
 	}
 
 	async navigate(location, options) {
-		await this._lastView.initializedPromise;
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		await view.initializedPromise;
 		// Select the annotation instead of just navigating when navigation is triggered externally
 		if (
 			location.annotationID
@@ -1271,46 +1568,62 @@ class Reader {
 			this.setSelectedAnnotations([location.annotationID]);
 		}
 		else {
-			this._lastView.navigate(location, options);
+			view.navigate(location, options);
 		}
 	}
 
 	navigateBack() {
-		this._lastView.navigateBack();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateBack();
 	}
 
 	navigateForward() {
-		this._lastView.navigateForward();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateForward();
 	}
 
 	navigateToFirstPage() {
 		this._ensureType('pdf', 'epub');
-		this._lastView.navigateToFirstPage();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToFirstPage();
 	}
 
 	navigateToLastPage() {
 		this._ensureType('pdf', 'epub');
-		this._lastView.navigateToLastPage();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToLastPage();
 	}
 
 	navigateToPreviousPage() {
 		this._ensureType('pdf', 'epub');
-		this._lastView.navigateToPreviousPage();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToPreviousPage();
 	}
 
 	navigateToNextPage() {
 		this._ensureType('pdf', 'epub');
-		this._lastView.navigateToNextPage();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToNextPage();
 	}
 
 	navigateToPreviousSection() {
 		this._ensureType('epub');
-		this._lastView.navigateToPreviousSection();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToPreviousSection();
 	}
 
 	navigateToNextSection() {
 		this._ensureType('epub');
-		this._lastView.navigateToNextSection();
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.navigateToNextSection();
 	}
 
 	// Note: It's a bit weird, but this function is also used to deselect text in views, if an empty ids array is provided
@@ -1424,7 +1737,8 @@ class Reader {
 							}
 						}
 						else {
-							this._lastView.navigate({ annotationID: annotation.id });
+							const view = this._getLastViewSafe();
+							if (view) view.navigate({ annotationID: annotation.id });
 						}
 					}
 					// After a small delay for focus to settle, announce to screen readers that annotation
@@ -1506,17 +1820,23 @@ class Reader {
 	}
 
 	setLightTheme(themeName) {
+		debugLog('[Reader.setLightTheme] Called with themeName:', themeName);
 		let themes = [...DEFAULT_THEMES, ...(this._state.customThemes || [])];
 		themes = new Map(themes.map(theme => [theme.id, theme]));
 		let lightTheme = themes.get(themeName) || null;
-		this._updateState({ lightTheme });
+		debugLog('[Reader.setLightTheme] Resolved theme:', lightTheme?.id, lightTheme);
+		// Clear dark theme when setting light theme to ensure only one theme slot is active
+		this._updateState({ lightTheme, darkTheme: null });
 	}
 
 	setDarkTheme(themeName) {
+		debugLog('[Reader.setDarkTheme] Called with themeName:', themeName);
 		let themes = [...DEFAULT_THEMES, ...(this._state.customThemes || [])];
 		themes = new Map(themes.map(theme => [theme.id, theme]));
 		let darkTheme = themes.get(themeName) || null;
-		this._updateState({ darkTheme });
+		debugLog('[Reader.setDarkTheme] Resolved theme:', darkTheme?.id, darkTheme);
+		// Clear light theme when setting dark theme to ensure only one theme slot is active
+		this._updateState({ darkTheme, lightTheme: null });
 	}
 
 	toggleSidebar(open) {
@@ -1554,6 +1874,10 @@ class Reader {
 		primary = primary || !this._secondaryView;
 		this._lastViewPrimary = primary;
 		let view = primary ? this._primaryView : this._secondaryView;
+		if (!view) {
+			console.error(`focusView: ${primary ? '_primaryView' : '_secondaryView'} is null`);
+			return;
+		}
 		view.focus();
 		this._updateState({ primary });
 		if (primary) {
@@ -1611,10 +1935,21 @@ class Reader {
 	reload(data) {
 		this._data = data;
 		this._primaryViewContainer.replaceChildren();
-		this._primaryView = this._createView(true);
+		try {
+			this._primaryView = this._createView(true);
+		} catch (e) {
+			console.error('Failed to create primary view in reload:', e);
+			this.setErrorMessage(`Failed to reload document: ${e.message}`);
+			throw e;
+		}
 		if (this._state.splitType) {
 			this._secondaryViewContainer.replaceChildren();
-			this._secondaryView = this._createView(false);
+			try {
+				this._secondaryView = this._createView(false);
+			} catch (e) {
+				console.error('Failed to create secondary view in reload:', e);
+				this._secondaryView = null;
+			}
 		}
 	}
 
@@ -1769,7 +2104,9 @@ class Reader {
 
 	set scrollMode(value) {
 		this._ensureType('pdf');
-		this._lastView.setScrollMode(value);
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.setScrollMode(value);
 	}
 
 	get spreadMode() {
@@ -1779,7 +2116,9 @@ class Reader {
 
 	set spreadMode(value) {
 		this._ensureType('pdf', 'epub');
-		this._lastView.setSpreadMode(value);
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.setSpreadMode(value);
 	}
 
 	get canCopy() {
@@ -1857,7 +2196,9 @@ class Reader {
 
 	set flowMode(value) {
 		this._ensureType('epub');
-		this._lastView.setFlowMode(value);
+		const view = this._getLastViewSafe();
+		if (!view) return;
+		view.setFlowMode(value);
 	}
 }
 
