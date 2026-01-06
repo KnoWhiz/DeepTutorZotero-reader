@@ -714,7 +714,14 @@ class DOCXView extends DOMView {
 	setSidebarOpen(_sidebarOpen) {
 		// Dispatch resize event to trigger layout recalculation when sidebar opens/closes
 		// Similar to EPUBView implementation
+		// Guard: Only dispatch if view is fully initialized to avoid blocking during init
+		if (!this.initialized) {
+			console.log('[DOCXView.setSidebarOpen] Skipping resize dispatch - view not initialized');
+			return;
+		}
+		console.log('[DOCXView.setSidebarOpen] Dispatching resize event');
 		this._iframeWindow.dispatchEvent(new Event('resize'));
+		console.log('[DOCXView.setSidebarOpen] Resize dispatch done');
 	}
 
 	// Override _openAnnotationPopup to handle text/image/ink annotations with absolute positioning

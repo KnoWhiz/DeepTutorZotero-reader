@@ -594,6 +594,7 @@ class Reader {
 
 		if (init) console.log('[Reader._updateState] STEP C3: checking tool');
 		if (this._state.tool !== previousState.tool) {
+			if (init) console.log('[Reader._updateState] STEP C3a: tool changed, primaryView exists:', !!this._primaryView);
 			debugLog('[Reader._updateState] Tool changed:', {
 				previous: previousState.tool?.type,
 				current: this._state.tool?.type,
@@ -602,8 +603,11 @@ class Reader {
 				primaryView: !!this._primaryView,
 				secondaryView: !!this._secondaryView
 			});
+			if (init) console.log('[Reader._updateState] STEP C3b: about to call primaryView.setTool');
 			this._primaryView?.setTool(this._state.tool);
+			if (init) console.log('[Reader._updateState] STEP C3c: primaryView.setTool done');
 			this._secondaryView?.setTool(this._state.tool);
+			if (init) console.log('[Reader._updateState] STEP C3d: secondaryView.setTool done');
 		}
 
 		if (this._state.showAnnotations !== previousState.showAnnotations) {
@@ -702,27 +706,40 @@ class Reader {
 			this._secondaryView?.setFindState(this._state.secondaryViewFindState);
 		}
 
+		if (init) console.log('[Reader._updateState] STEP C4: entering fontFamily/hyphenate block, type:', this._type);
 		if (this._type === 'epub' || this._type === 'docx' || this._type === 'snapshot') {
 			if (this._state.fontFamily !== previousState.fontFamily) {
+				if (init) console.log('[Reader._updateState] STEP C4a: fontFamily changed, calling setFontFamily');
 				this._primaryView?.setFontFamily(this._state.fontFamily);
 				this._secondaryView?.setFontFamily(this._state.fontFamily);
+				if (init) console.log('[Reader._updateState] STEP C4b: setFontFamily done');
 			}
 
 			if (this._state.hyphenate !== previousState.hyphenate) {
+				if (init) console.log('[Reader._updateState] STEP C4c: hyphenate changed, calling setHyphenate');
 				this._primaryView?.setHyphenate(this._state.hyphenate);
 				this._secondaryView?.setHyphenate(this._state.hyphenate);
+				if (init) console.log('[Reader._updateState] STEP C4d: setHyphenate done');
 			}
 		}
+		if (init) console.log('[Reader._updateState] STEP C5: exiting fontFamily/hyphenate block');
 
+		if (init) console.log('[Reader._updateState] STEP C6: checking sidebarView');
 		if (init || this._state.sidebarView !== previousState.sidebarView) {
+			if (init) console.log('[Reader._updateState] STEP C6a: calling setSidebarView');
 			this._primaryView?.setSidebarView?.(this._state.sidebarView);
 			this._secondaryView?.setSidebarView?.(this._state.sidebarView);
+			if (init) console.log('[Reader._updateState] STEP C6b: setSidebarView done');
 		}
 
+		if (init) console.log('[Reader._updateState] STEP C7: checking sidebarOpen');
 		if (init || this._state.sidebarOpen !== previousState.sidebarOpen) {
+			if (init) console.log('[Reader._updateState] STEP C7a: toggling sidebar-open class');
 			document.body.classList.toggle('sidebar-open', this._state.sidebarOpen);
-			this._primaryView?.setSidebarOpen(this._state.sidebarOpen);
+			if (init) console.log('[Reader._updateState] STEP C7b: calling setSidebarOpen');
+			this._primaryView?.setSidebarOpen(this._state.sidebarOpen); //Causing blocking of DOCX Reader
 			this._secondaryView?.setSidebarOpen(this._state.sidebarOpen);
+			if (init) console.log('[Reader._updateState] STEP C7c: setSidebarOpen done');
 		}
 
 		if (init) console.log('🔴🔴🔴 [Reader._updateState] STEP D: before splitType check 🔴🔴🔴');

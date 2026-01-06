@@ -1870,8 +1870,10 @@ abstract class DOMView<State extends DOMViewState, Data> {
 	// ***
 
 	setTool(tool: Tool) {
+		console.log('[DOMView.setTool] ENTER, tool type:', tool?.type);
 		this._tool = tool;
 
+		console.log('[DOMView.setTool] Setting dataset.tool');
 		this._iframeDocument.body.dataset.tool = tool.type;
 
 		// When highlighting or underlining, we draw a preview annotation during selection, so set the browser's
@@ -1881,12 +1883,15 @@ abstract class DOMView<State extends DOMViewState, Data> {
 			// 50% opacity, like annotations -- not needed if we're using a system color
 			selectionColor += '80';
 		}
+		console.log('[DOMView.setTool] Setting selection color');
 		this._iframeDocument.documentElement.style.setProperty('--selection-color', selectionColor);
 
 		if (this._previewAnnotation && tool.type !== 'note') {
 			this._previewAnnotation = null;
 		}
+		console.log('[DOMView.setTool] About to call _renderAnnotations');
 		this._renderAnnotations();
+		console.log('[DOMView.setTool] EXIT');
 	}
 
 	setAnnotations(annotations: WADMAnnotation[]) {
