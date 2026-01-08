@@ -350,7 +350,11 @@ class DOCXView extends DOMView {
 				// Start the search
 				this._find.run(searchContext).then(() => {
 					// Navigate to first result
-					if (this._find && this._find.next()) {
+					if (this._find) {
+						const result = this._find.next();
+						if (result) {
+							scrollIntoView(result.range.toRange(), { block: 'start' });
+						}
 						this._renderAnnotations();
 					}
 				});
