@@ -87,6 +87,9 @@ class DOCXView extends DOMView {
 		this._contentContainer.className = 'docx-content';
 		this._iframeDocument.body.appendChild(this._contentContainer);
 		
+		// Initialize scale from viewState (or default to 1)
+		this._setScale(viewState.scale || 1);
+		
 		// Load and render HTML content
 		// This now waits for content to be fully rendered and ready
 		await this._renderContent();
@@ -632,7 +635,8 @@ class DOCXView extends DOMView {
 
 	_setScale(scale) {
 		this.scale = scale;
-		this._iframeDocument.documentElement.style.setProperty('--scale', String(scale));
+		// Set zoom directly on body (CSS variables + zoom don't work reliably in Firefox)
+		this._iframeDocument.body.style.zoom = String(scale);
 	}
 
 	async print() {
