@@ -1098,7 +1098,7 @@ class Reader {
 			result: null // Reset result when setting new query
 		};
 	   
-	 this._updateState({ [key]: findState });
+		this._updateState({ [key]: findState });
 		// If opening popup, focus the input after a short delay
 		if (openPopup) {
 			setTimeout(() => {
@@ -1110,7 +1110,7 @@ class Reader {
 				}
 			}, 100);
 		}
-	}
+	} 
 
 	_sidebarScrollAnnotationIntoViev(id) {
 		this._readerRef.current.sidebarScrollAnnotationIntoView(id);
