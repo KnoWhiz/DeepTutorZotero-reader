@@ -45,6 +45,45 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 
 	protected _focusMode!: FocusMode;
 
+	// State for text/image/ink annotation tools
+	private _pointerDownPosition: { x: number; y: number } | null = null;
+	private _annotationAction: {
+		type: string;
+		paths?: number[][];
+		startX?: number;
+		startY?: number;
+	} | null = null;
+
+	/**
+	 * Override setAnnotations to reconstruct _positionData for text/image/ink annotations
+	 * that were loaded from the database. The position data is stored inside
+	 * the position object but needs to be extracted to _positionData for rendering.
+	 */
+	override setAnnotations(annotations: WADMAnnotation[]) {
+		// Reconstruct _positionData from position for text/image/ink annotations
+		for (const annotation of annotations) {
+			if (annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'ink') {
+				const position = annotation.position as any;
+				if (position && !((annotation as any)._positionData)) {
+					// Extract position data from the position object
+					if (position.rects) {
+						(annotation as any)._positionData = {
+							rects: position.rects,
+							fontSize: position.fontSize,
+							rotation: position.rotation || 0
+						};
+					} else if (position.paths) {
+						(annotation as any)._positionData = {
+							paths: position.paths,
+							width: position.width || 2
+						};
+					}
+				}
+			}
+		}
+		super.setAnnotations(annotations);
+	}
+
 	private get _searchContext() {
 		let searchContext = createSearchContext(getVisibleTextNodes(this._iframeDocument.body));
 		Object.defineProperty(this, '_searchContext', { value: searchContext });
@@ -151,6 +190,9 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 		style.innerHTML = injectCSS;
 		this._iframeDocument.head.append(style);
 
+		// Make document content immutable (read-only viewer)
+		this._makeContentImmutable();
+
 		// Validate viewState and its properties
 		// Also make sure this doesn't trigger _updateViewState
 		this._setScale(viewState.scale ?? 1);
@@ -252,6 +294,47 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 		this._options.onSetOutline(outline);
 	}
 
+	/**
+	 * Make document content immutable - snapshot viewer is read-only.
+	 * Removes contenteditable attributes and disables form elements.
+	 * Note: Annotation textareas (in shadow root) are still editable.
+	 */
+	private _makeContentImmutable() {
+		// Remove contenteditable attribute from all elements
+		const editableElements = this._iframeDocument.querySelectorAll('[contenteditable]');
+		for (const el of editableElements) {
+			el.setAttribute('contenteditable', 'false');
+		}
+
+		// Disable all form inputs, textareas, and selects
+		const formElements = this._iframeDocument.querySelectorAll('input, textarea, select, button') as NodeListOf<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>;
+		for (const el of formElements) {
+			el.disabled = true;
+			el.setAttribute('readonly', 'true');
+		}
+
+		// Set document.designMode to off (prevents entire document editing)
+		this._iframeDocument.designMode = 'off';
+
+		// Prevent beforeinput events which could trigger editing on document content
+		// BUT allow input in annotation textareas (which are in the shadow root)
+		// Check, for every keystroke, whether the target is inside the annotation shadow root
+		this._iframeDocument.addEventListener('beforeinput', (e) => {
+			// Use composedPath() to get the full event path through shadow DOM boundaries.
+			// We check if our annotation shadow root is in the path - this works because
+			// path.includes() uses strict equality (===) which works across iframe realms,
+			// unlike instanceof checks which can fail across different JavaScript contexts.
+			const path = e.composedPath();
+			const isInAnnotationOverlay = path.includes(this._annotationShadowRoot);
+			
+			if (isInAnnotationOverlay) {
+				return; // Allow annotation input
+			}
+			// Block all other input (document content)
+			e.preventDefault();
+		}, true);
+	}
+
 	protected _getAnnotationFromRange(range: Range, type: AnnotationType, color?: string): NewAnnotation<WADMAnnotation> | null {
 		if (range.collapsed) {
 			return null;
@@ -309,6 +392,141 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 			countString = countString.substring(0, SORT_INDEX_LENGTH);
 		}
 		return countString;
+	}
+
+	/**
+	 * Create text annotation at a specific position
+	 */
+	private _createTextAnnotation(position: { x: number; y: number }): NewAnnotation<WADMAnnotation> | null {
+		const fontSize = (this._tool as any).size || 16;
+		const rect = [
+			position.x - fontSize / 2,
+			position.y - fontSize / 2,
+			position.x + fontSize / 2,
+			position.y + fontSize / 2
+		];
+
+		// Create a range for the selector (use body as anchor since text annotations are absolutely positioned)
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+
+		const selector = this.toSelector(range);
+		if (!selector) {
+			return null;
+		}
+
+		// Calculate sort index
+		const sortIndex = this._getSortIndex(range);
+
+		// Store position data INSIDE the position object so it gets persisted to annotationPosition
+		const positionWithData = {
+			...selector,
+			rects: [rect],
+			fontSize,
+			rotation: 0
+		};
+
+		const annotation: any = {
+			type: 'text' as AnnotationType,
+			color: this._tool.color,
+			sortIndex,
+			position: positionWithData
+		};
+
+		// Also store as _positionData for immediate rendering
+		annotation._positionData = {
+			rects: [rect],
+			fontSize,
+			rotation: 0
+		};
+
+		return annotation;
+	}
+
+	/**
+	 * Create image annotation with rectangle
+	 */
+	private _createImageAnnotation(params: { startX: number; startY: number; endX: number; endY: number }): NewAnnotation<WADMAnnotation> | null {
+		const { startX, startY, endX, endY } = params;
+		const rect = [
+			Math.min(startX, endX),
+			Math.min(startY, endY),
+			Math.max(startX, endX),
+			Math.max(startY, endY)
+		];
+
+		// Create a range for the selector (use body as anchor)
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+		const selector = this.toSelector(range);
+		if (!selector) {
+			return null;
+		}
+
+		// Calculate sort index based on position
+		const sortIndex = String(Math.floor(rect[1])).padStart(SORT_INDEX_LENGTH, '0');
+
+		// Store position data INSIDE the position object so it gets persisted
+		const positionWithData = {
+			...selector,
+			rects: [rect]
+		};
+
+		const annotation: any = {
+			type: 'image' as AnnotationType,
+			color: this._tool.color,
+			sortIndex,
+			position: positionWithData
+		};
+
+		// Also store as _positionData for immediate rendering
+		annotation._positionData = {
+			rects: [rect]
+		};
+
+		return annotation;
+	}
+
+	/**
+	 * Create ink annotation with path
+	 */
+	private _createInkAnnotation(action: { paths?: number[][] }): NewAnnotation<WADMAnnotation> | null {
+		if (!action.paths || action.paths[0].length < 2) {
+			return null;
+		}
+
+		// Create a range for the selector (use body as anchor)
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+		const selector = this.toSelector(range);
+		if (!selector) {
+			return null;
+		}
+
+		// Calculate sort index based on first point
+		const sortIndex = String(Math.floor(action.paths[0][1])).padStart(SORT_INDEX_LENGTH, '0');
+
+		// Store position data INSIDE the position object so it gets persisted
+		const positionWithData = {
+			...selector,
+			paths: action.paths,
+			width: (this._tool as any).size || 2
+		};
+
+		const annotation: any = {
+			type: 'ink' as AnnotationType,
+			color: this._tool.color,
+			sortIndex,
+			position: positionWithData
+		};
+
+		// Also store as _positionData for immediate rendering
+		annotation._positionData = {
+			paths: action.paths,
+			width: (this._tool as any).size || 2
+		};
+
+		return annotation;
 	}
 
 	toSelector(range: Range): Selector | null {
@@ -528,6 +746,178 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 			return;
 		}
 		this._handleViewUpdate();
+	}
+
+	// Override pointer event handlers to support text/image/ink tools
+	protected override _handlePointerDown(event: PointerEvent) {
+		// Call parent implementation first
+		super._handlePointerDown(event);
+
+		// Handle text/image/ink tools
+		if ((event.buttons & 1) === 1 && event.isPrimary) {
+			if (this._tool.type === 'text' || this._tool.type === 'image' || this._tool.type === 'ink') {
+				// Check if we're clicking on an existing annotation
+				// If so, don't start creating a new one - let selection happen instead
+				const annotationIDs = this._annotationShadowRoot?.elementsFromPoint(event.clientX, event.clientY)
+					.map(target => target.getAttribute('data-annotation-id'))
+					.filter(Boolean) ?? [];
+				if (annotationIDs.length > 0) {
+					return;
+				}
+
+				// Store pointer down position in document coordinates
+				this._pointerDownPosition = {
+					x: event.clientX + this._iframeWindow.scrollX,
+					y: event.clientY + this._iframeWindow.scrollY
+				};
+
+				if (this._tool.type === 'ink') {
+					// Start ink annotation immediately
+					this._annotationAction = {
+						type: 'ink',
+						paths: [[this._pointerDownPosition.x, this._pointerDownPosition.y]]
+					};
+					this._previewAnnotation = this._createInkAnnotation(this._annotationAction);
+					this._renderAnnotations();
+				}
+				else if (this._tool.type === 'text') {
+					// Start text annotation
+					this._annotationAction = {
+						type: 'text',
+						startX: this._pointerDownPosition.x,
+						startY: this._pointerDownPosition.y
+					};
+				}
+				else if (this._tool.type === 'image') {
+					// Start image annotation
+					this._annotationAction = {
+						type: 'image',
+						startX: this._pointerDownPosition.x,
+						startY: this._pointerDownPosition.y
+					};
+				}
+
+				event.preventDefault();
+			}
+		}
+	}
+
+	protected override _handlePointerMove(event: PointerEvent) {
+		// Call parent implementation first
+		super._handlePointerMove(event);
+
+		// Handle text/image/ink tools
+		if ((event.buttons & 1) === 1 && event.isPrimary && this._annotationAction) {
+			// Get current position in document coordinates
+			const currentX = event.clientX + this._iframeWindow.scrollX;
+			const currentY = event.clientY + this._iframeWindow.scrollY;
+
+			if (this._annotationAction.type === 'ink' && this._annotationAction.paths) {
+				// Add point to ink path
+				this._annotationAction.paths[0].push(currentX, currentY);
+				this._previewAnnotation = this._createInkAnnotation(this._annotationAction);
+				this._renderAnnotations();
+			}
+			else if (this._annotationAction.type === 'image') {
+				// Update image rectangle
+				const imageParams = {
+					startX: this._annotationAction.startX!,
+					startY: this._annotationAction.startY!,
+					endX: currentX,
+					endY: currentY
+				};
+				this._previewAnnotation = this._createImageAnnotation(imageParams);
+				this._renderAnnotations();
+			}
+			// Text annotations are created on pointer up
+		}
+	}
+
+	protected override _handlePointerUp(event: PointerEvent) {
+		// Call parent implementation first
+		super._handlePointerUp(event);
+
+		// Handle text/image/ink tools
+		if (event.isPrimary && this._annotationAction) {
+			if (this._annotationAction.type === 'text') {
+				// Create text annotation at click position
+				if (this._pointerDownPosition) {
+					const annotation = this._createTextAnnotation(this._pointerDownPosition);
+					if (annotation) {
+						const addedAnnotation = this._options.onAddAnnotation(annotation, true);
+						// Select the annotation and open popup
+						if (addedAnnotation?.id) {
+							this._options.onSelectAnnotations([addedAnnotation.id], event);
+							this._renderAnnotations(true);
+							this._openAnnotationPopup(addedAnnotation);
+						}
+						else {
+							this._openAnnotationPopup();
+						}
+					}
+				}
+			}
+			else if (this._annotationAction.type === 'image') {
+				// Create image annotation if rectangle is large enough
+				if (this._previewAnnotation) {
+					const rect = (this._previewAnnotation as any)._positionData?.rects?.[0];
+					if (rect && Math.abs(rect[2] - rect[0]) > 10 && Math.abs(rect[3] - rect[1]) > 10) {
+						this._options.onAddAnnotation(this._previewAnnotation, true);
+					}
+					this._previewAnnotation = null;
+					this._renderAnnotations();
+				}
+			}
+			else if (this._annotationAction.type === 'ink') {
+				// Create ink annotation if path has enough points
+				if (this._previewAnnotation && this._annotationAction.paths) {
+					const pathLength = this._annotationAction.paths[0].length;
+					if (pathLength >= 4) {
+						this._options.onAddAnnotation(this._previewAnnotation, true);
+					}
+				}
+				this._previewAnnotation = null;
+				this._renderAnnotations();
+			}
+
+			// Reset action state
+			this._annotationAction = null;
+			this._pointerDownPosition = null;
+		}
+	}
+
+	// Override _openAnnotationPopup to handle text/image/ink annotations with absolute positioning
+	protected override _openAnnotationPopup(annotation?: WADMAnnotation) {
+		if (!annotation) {
+			if (this._selectedAnnotationIDs.length !== 1) {
+				return;
+			}
+			annotation = this._annotationsByID.get(this._selectedAnnotationIDs[0]);
+			if (!annotation) {
+				return;
+			}
+		}
+
+		// For text/image/ink annotations, find the rendered element and get its bounding rect
+		// This mirrors how 'note' annotations are handled in DOMView._openAnnotationPopup
+		if (annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'ink') {
+			const annotationElem = this._annotationRenderRootEl?.querySelector(`[data-annotation-id="${annotation.id}"]`);
+			if (annotationElem) {
+				// Only scale the rect (same as note annotations) - don't double-transform
+				const domRect = this._scaleDOMRect(annotationElem.getBoundingClientRect());
+				const popupRect: [number, number, number, number] = [
+					domRect.left,
+					domRect.top,
+					domRect.right,
+					domRect.bottom
+				];
+				this._options.onSetAnnotationPopup({ rect: popupRect, annotation });
+				return;
+			}
+		}
+
+		// For other annotation types, use parent implementation
+		super._openAnnotationPopup(annotation);
 	}
 
 
