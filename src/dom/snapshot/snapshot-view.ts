@@ -45,6 +45,45 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 
 	protected _focusMode!: FocusMode;
 
+	// State for text/image/ink annotation tools
+	private _pointerDownPosition: { x: number; y: number } | null = null;
+	private _annotationAction: {
+		type: string;
+		paths?: number[][];
+		startX?: number;
+		startY?: number;
+	} | null = null;
+
+	/**
+	 * Override setAnnotations to reconstruct _positionData for text/image/ink annotations
+	 * that were loaded from the database. The position data is stored inside
+	 * the position object but needs to be extracted to _positionData for rendering.
+	 */
+	override setAnnotations(annotations: WADMAnnotation[]) {
+		// Reconstruct _positionData from position for text/image/ink annotations
+		for (const annotation of annotations) {
+			if (annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'ink') {
+				const position = annotation.position as any;
+				if (position && !((annotation as any)._positionData)) {
+					// Extract position data from the position object
+					if (position.rects) {
+						(annotation as any)._positionData = {
+							rects: position.rects,
+							fontSize: position.fontSize,
+							rotation: position.rotation || 0
+						};
+					} else if (position.paths) {
+						(annotation as any)._positionData = {
+							paths: position.paths,
+							width: position.width || 2
+						};
+					}
+				}
+			}
+		}
+		super.setAnnotations(annotations);
+	}
+
 	private get _searchContext() {
 		let searchContext = createSearchContext(getVisibleTextNodes(this._iframeDocument.body));
 		Object.defineProperty(this, '_searchContext', { value: searchContext });
@@ -151,6 +190,26 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 		style.innerHTML = injectCSS;
 		this._iframeDocument.head.append(style);
 
+		// Make annotation overlay document-sized (not viewport-sized)
+		// This allows annotations to use document-absolute coordinates
+		this._updateAnnotationOverlaySize();
+		
+		// Update overlay size when document dimensions change
+		const resizeObserver = new ResizeObserver(() => {
+			this._updateAnnotationOverlaySize();
+		});
+		resizeObserver.observe(this._iframeDocument.body);
+		resizeObserver.observe(this._iframeDocument.documentElement);
+		this._iframeWindow.addEventListener('resize', () => {
+			this._updateAnnotationOverlaySize();
+		});
+
+		// Make document content immutable (read-only viewer)
+		this._makeContentImmutable();
+		
+		// Detect and handle nested scroll containers (like Notion)
+		this._setupOverlayForNestedScroll();
+
 		// Validate viewState and its properties
 		// Also make sure this doesn't trigger _updateViewState
 		this._setScale(viewState.scale ?? 1);
@@ -252,6 +311,47 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 		this._options.onSetOutline(outline);
 	}
 
+	/**
+	 * Make document content immutable - snapshot viewer is read-only.
+	 * Removes contenteditable attributes and disables form elements.
+	 * Note: Annotation textareas (in shadow root) are still editable.
+	 */
+	private _makeContentImmutable() {
+		// Remove contenteditable attribute from all elements
+		const editableElements = this._iframeDocument.querySelectorAll('[contenteditable]');
+		for (const el of editableElements) {
+			el.setAttribute('contenteditable', 'false');
+		}
+
+		// Disable all form inputs, textareas, and selects
+		const formElements = this._iframeDocument.querySelectorAll('input, textarea, select, button') as NodeListOf<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement | HTMLButtonElement>;
+		for (const el of formElements) {
+			el.disabled = true;
+			el.setAttribute('readonly', 'true');
+		}
+
+		// Set document.designMode to off (prevents entire document editing)
+		this._iframeDocument.designMode = 'off';
+
+		// Prevent beforeinput events which could trigger editing on document content
+		// BUT allow input in annotation textareas (which are in the shadow root)
+		// Check, for every keystroke, whether the target is inside the annotation shadow root
+		this._iframeDocument.addEventListener('beforeinput', (e) => {
+			// Use composedPath() to get the full event path through shadow DOM boundaries.
+			// We check if our annotation shadow root is in the path - this works because
+			// path.includes() uses strict equality (===) which works across iframe realms,
+			// unlike instanceof checks which can fail across different JavaScript contexts.
+			const path = e.composedPath();
+			const isInAnnotationOverlay = path.includes(this._annotationShadowRoot);
+			
+			if (isInAnnotationOverlay) {
+				return; // Allow annotation input
+			}
+			// Block all other input (document content)
+			e.preventDefault();
+		}, true);
+	}
+
 	protected _getAnnotationFromRange(range: Range, type: AnnotationType, color?: string): NewAnnotation<WADMAnnotation> | null {
 		if (range.collapsed) {
 			return null;
@@ -309,6 +409,160 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 			countString = countString.substring(0, SORT_INDEX_LENGTH);
 		}
 		return countString;
+	}
+
+	/**
+	 * Create text annotation at a specific position
+	 */
+	private _createTextAnnotation(position: { x: number; y: number }): NewAnnotation<WADMAnnotation> | null {
+		const fontSize = (this._tool as any).size || 16;
+		const rect = [
+			position.x - fontSize / 2,
+			position.y - fontSize / 2,
+			position.x + fontSize / 2,
+			position.y + fontSize / 2
+		];
+		
+		console.debug('[SnapshotView._createTextAnnotation] Creating text annotation:', {
+			positionX: position.x,
+			positionY: position.y,
+			fontSize,
+			rect,
+			windowScrollX: this._iframeWindow.scrollX,
+			windowScrollY: this._iframeWindow.scrollY
+		});
+
+		// Create a range for the selector (use body as anchor since text annotations are absolutely positioned)
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+
+		const selector = this.toSelector(range);
+		if (!selector) {
+			return null;
+		}
+
+		// Calculate sort index
+		const sortIndex = this._getSortIndex(range);
+
+		// Store position data INSIDE the position object so it gets persisted to annotationPosition
+		const positionWithData = {
+			...selector,
+			rects: [rect],
+			fontSize,
+			rotation: 0
+		};
+
+		const annotation: any = {
+			type: 'text' as AnnotationType,
+			color: this._tool.color,
+			sortIndex,
+			position: positionWithData
+		};
+
+		// Also store as _positionData for immediate rendering
+		annotation._positionData = {
+			rects: [rect],
+			fontSize,
+			rotation: 0
+		};
+
+		return annotation;
+	}
+
+	/**
+	 * Create image annotation with rectangle
+	 */
+	private _createImageAnnotation(params: { startX: number; startY: number; endX: number; endY: number }): NewAnnotation<WADMAnnotation> | null {
+		const { startX, startY, endX, endY } = params;
+		const rect = [
+			Math.min(startX, endX),
+			Math.min(startY, endY),
+			Math.max(startX, endX),
+			Math.max(startY, endY)
+		];
+		
+		console.debug('[SnapshotView._createImageAnnotation] Creating image annotation:', {
+			startX,
+			startY,
+			endX,
+			endY,
+			rect,
+			windowScrollX: this._iframeWindow.scrollX,
+			windowScrollY: this._iframeWindow.scrollY
+		});
+
+		// Create a range for the selector (use body as anchor)
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+		const selector = this.toSelector(range);
+		if (!selector) {
+			return null;
+		}
+
+		// Calculate sort index based on position
+		const sortIndex = String(Math.floor(rect[1])).padStart(SORT_INDEX_LENGTH, '0');
+
+		// Store position data INSIDE the position object so it gets persisted
+		const positionWithData = {
+			...selector,
+			rects: [rect]
+		};
+
+		const annotation: any = {
+			type: 'image' as AnnotationType,
+			color: this._tool.color,
+			sortIndex,
+			position: positionWithData
+		};
+
+		// Also store as _positionData for immediate rendering
+		annotation._positionData = {
+			rects: [rect]
+		};
+
+		return annotation;
+	}
+
+	/**
+	 * Create ink annotation with path
+	 */
+	private _createInkAnnotation(action: { paths?: number[][] }): NewAnnotation<WADMAnnotation> | null {
+		if (!action.paths || action.paths[0].length < 2) {
+			return null;
+		}
+
+		// Create a range for the selector (use body as anchor)
+		const range = this._iframeDocument.createRange();
+		range.selectNode(this._iframeDocument.body);
+		const selector = this.toSelector(range);
+		if (!selector) {
+			return null;
+		}
+
+		// Calculate sort index based on first point
+		const sortIndex = String(Math.floor(action.paths[0][1])).padStart(SORT_INDEX_LENGTH, '0');
+
+		// Store position data INSIDE the position object so it gets persisted
+		const positionWithData = {
+			...selector,
+			paths: action.paths,
+			width: (this._tool as any).size || 2
+		};
+
+		const annotation: any = {
+			type: 'ink' as AnnotationType,
+			color: this._tool.color,
+			sortIndex,
+			position: positionWithData
+		};
+
+		// Also store as _positionData for immediate rendering
+		annotation._positionData = {
+			paths: action.paths,
+			width: (this._tool as any).size || 2
+		};
+
+		return annotation;
 	}
 
 	toSelector(range: Range): Selector | null {
@@ -518,9 +772,133 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 	}
 
 	protected override _handleScroll(event: Event) {
+		console.debug('[SnapshotView._handleScroll] Document scroll detected!', {
+			eventType: event.type,
+			target: (event.target as Element)?.tagName,
+			scrollX: this._iframeWindow.scrollX,
+			scrollY: this._iframeWindow.scrollY
+		});
+		
 		super._handleScroll(event);
 		this._updateViewState();
 		this._pushHistoryPoint(true);
+		
+		// Update overlay size on scroll in case document dimensions changed
+		this._updateAnnotationOverlaySize();
+	}
+
+	// Override to handle nested scroll containers (like Notion documents)
+	protected override _handleScrollCapture(event: Event) {
+		const target = event.target as Node;
+		
+		// Only handle nested container scrolls (not document scroll)
+		if (target !== this._iframeDocument as Node) {
+			const el = target as HTMLElement;
+			console.debug('[SnapshotView._handleScrollCapture] Nested container scroll detected!', {
+				targetTag: el?.tagName,
+				targetId: el?.id,
+				targetClass: el?.className,
+				scrollTop: el?.scrollTop,
+				scrollLeft: el?.scrollLeft
+			});
+		}
+		
+		// Call base implementation (re-renders annotations)
+		super._handleScrollCapture(event);
+		
+		// Also update overlay size for nested scrolls
+		this._updateAnnotationOverlaySize();
+	}
+
+	// Update annotation overlay to match document/scroll container dimensions
+	private _updateAnnotationOverlaySize() {
+		const overlay = this._iframeDocument.getElementById('annotation-overlay') as HTMLElement;
+		if (!overlay) {
+			console.warn('[SnapshotView._updateAnnotationOverlaySize] Overlay not found');
+			return;
+		}
+
+		// Use scroll container if we have one, otherwise use document
+		const sizeSource = this._primaryScrollContainer || this._iframeDocument.documentElement;
+		
+		// Overlay should match scroll dimensions of the source
+		const scrollWidth = sizeSource.scrollWidth;
+		const scrollHeight = sizeSource.scrollHeight;
+		
+		// Set overlay to match dimensions
+		overlay.style.width = `${scrollWidth}px`;
+		overlay.style.height = `${scrollHeight}px`;
+		
+		console.debug('[SnapshotView._updateAnnotationOverlaySize] Updated overlay size:', {
+			source: this._primaryScrollContainer ? 'scrollContainer' : 'document',
+			scrollWidth,
+			scrollHeight,
+			overlayWidth: overlay.style.width,
+			overlayHeight: overlay.style.height
+		});
+	}
+
+	// Track the primary scroll container if different from document
+	private _primaryScrollContainer: HTMLElement | null = null;
+
+	// Detect nested scroll containers and move overlay inside them
+	private _setupOverlayForNestedScroll() {
+		const overlay = this._iframeDocument.getElementById('annotation-overlay');
+		if (!overlay) return;
+
+		// Find the primary scroll container
+		// Look for elements with overflow: auto/scroll that have significant scroll height
+		const findScrollContainer = (root: Element): HTMLElement | null => {
+			const elements = root.querySelectorAll('*');
+			for (const el of elements) {
+				if (el === overlay) continue;
+				const style = this._iframeWindow.getComputedStyle(el);
+				const overflowY = style.overflowY;
+				const overflowX = style.overflowX;
+				
+				if ((overflowY === 'auto' || overflowY === 'scroll' || 
+				     overflowX === 'auto' || overflowX === 'scroll') &&
+				    el.scrollHeight > el.clientHeight + 10) {
+					return el as HTMLElement;
+				}
+			}
+			return null;
+		};
+
+		const scrollContainer = findScrollContainer(this._iframeDocument.body);
+		
+		if (scrollContainer) {
+			console.debug('[SnapshotView._setupOverlayForNestedScroll] Found nested scroll container:', {
+				tagName: scrollContainer.tagName,
+				id: scrollContainer.id,
+				className: scrollContainer.className,
+				scrollHeight: scrollContainer.scrollHeight,
+				clientHeight: scrollContainer.clientHeight
+			});
+
+			this._primaryScrollContainer = scrollContainer;
+
+			// Ensure the scroll container has position: relative for absolute positioning
+			const containerStyle = this._iframeWindow.getComputedStyle(scrollContainer);
+			if (containerStyle.position === 'static') {
+				scrollContainer.style.position = 'relative';
+			}
+
+			// Move overlay inside the scroll container
+			scrollContainer.appendChild(overlay);
+
+			// Update overlay size to match scroll container's scroll dimensions
+			overlay.style.width = `${scrollContainer.scrollWidth}px`;
+			overlay.style.height = `${scrollContainer.scrollHeight}px`;
+			overlay.style.position = 'absolute';
+			overlay.style.left = '0';
+			overlay.style.top = '0';
+			overlay.style.pointerEvents = 'none';
+
+			console.debug('[SnapshotView._setupOverlayForNestedScroll] Moved overlay into scroll container');
+		} else {
+			console.debug('[SnapshotView._setupOverlayForNestedScroll] No nested scroll container found, using document body');
+		}
 	}
 
 	protected _handleVisibilityChange() {
@@ -528,6 +906,257 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 			return;
 		}
 		this._handleViewUpdate();
+	}
+
+	// Override pointer event handlers to support text/image/ink tools
+	protected override _handlePointerDown(event: PointerEvent) {
+		// Call parent implementation first
+		super._handlePointerDown(event);
+
+		// Handle text/image/ink tools
+		if ((event.buttons & 1) === 1 && event.isPrimary) {
+			if (this._tool.type === 'text' || this._tool.type === 'image' || this._tool.type === 'ink') {
+				// Check if we're clicking on an existing annotation
+				// If so, don't start creating a new one - let selection happen instead
+				const annotationIDs = this._annotationShadowRoot?.elementsFromPoint(event.clientX, event.clientY)
+					.map(target => target.getAttribute('data-annotation-id'))
+					.filter(Boolean) ?? [];
+				if (annotationIDs.length > 0) {
+					return;
+				}
+
+				// Store pointer down position in document coordinates
+				// Use elementFromPoint to account for scroll containers (like Notion)
+				const elementAtPoint = this._iframeDocument.elementFromPoint(event.clientX, event.clientY);
+				console.debug('[SnapshotView._handlePointerDown] Coordinate calculation:', {
+					clientX: event.clientX,
+					clientY: event.clientY,
+					windowScrollX: this._iframeWindow.scrollX,
+					windowScrollY: this._iframeWindow.scrollY,
+					elementAtPoint: elementAtPoint?.tagName,
+					elementAtPointId: elementAtPoint?.id,
+					elementAtPointClass: elementAtPoint?.className
+				});
+				
+				if (elementAtPoint) {
+					// Get the element's viewport-relative position
+					const elementClientRect = elementAtPoint.getBoundingClientRect();
+					// Calculate offset from element's top-left to click position
+					const offsetX = event.clientX - elementClientRect.left;
+					const offsetY = event.clientY - elementClientRect.top;
+					
+					let finalX: number, finalY: number;
+					
+					if (this._primaryScrollContainer) {
+						// For nested scroll containers, calculate position relative to the container's content
+						// This accounts for the container's scroll position
+						const containerClientRect = this._primaryScrollContainer.getBoundingClientRect();
+						finalX = (event.clientX - containerClientRect.left) + this._primaryScrollContainer.scrollLeft;
+						finalY = (event.clientY - containerClientRect.top) + this._primaryScrollContainer.scrollTop;
+					} else {
+						// For normal document scroll, use document-absolute coordinates
+						const elementRect = getBoundingPageRect(elementAtPoint);
+						finalX = elementRect.left + offsetX;
+						finalY = elementRect.top + offsetY;
+					}
+					
+					this._pointerDownPosition = { x: finalX, y: finalY };
+					
+					console.debug('[SnapshotView._handlePointerDown] Calculated position:', {
+						hasScrollContainer: !!this._primaryScrollContainer,
+						containerScrollLeft: this._primaryScrollContainer?.scrollLeft,
+						containerScrollTop: this._primaryScrollContainer?.scrollTop,
+						finalX: this._pointerDownPosition.x,
+						finalY: this._pointerDownPosition.y
+					});
+				} else {
+					// Fallback when no element at point
+					let finalX: number, finalY: number;
+					
+					if (this._primaryScrollContainer) {
+						const containerClientRect = this._primaryScrollContainer.getBoundingClientRect();
+						finalX = (event.clientX - containerClientRect.left) + this._primaryScrollContainer.scrollLeft;
+						finalY = (event.clientY - containerClientRect.top) + this._primaryScrollContainer.scrollTop;
+					} else {
+						finalX = event.clientX + this._iframeWindow.scrollX;
+						finalY = event.clientY + this._iframeWindow.scrollY;
+					}
+					
+					this._pointerDownPosition = { x: finalX, y: finalY };
+					
+					console.debug('[SnapshotView._handlePointerDown] Using fallback:', {
+						finalX: this._pointerDownPosition.x,
+						finalY: this._pointerDownPosition.y
+					});
+				}
+
+				if (this._tool.type === 'ink') {
+					// Start ink annotation immediately
+					this._annotationAction = {
+						type: 'ink',
+						paths: [[this._pointerDownPosition.x, this._pointerDownPosition.y]]
+					};
+					this._previewAnnotation = this._createInkAnnotation(this._annotationAction);
+					this._renderAnnotations();
+				}
+				else if (this._tool.type === 'text') {
+					// Start text annotation
+					this._annotationAction = {
+						type: 'text',
+						startX: this._pointerDownPosition.x,
+						startY: this._pointerDownPosition.y
+					};
+				}
+				else if (this._tool.type === 'image') {
+					// Start image annotation
+					this._annotationAction = {
+						type: 'image',
+						startX: this._pointerDownPosition.x,
+						startY: this._pointerDownPosition.y
+					};
+				}
+
+				event.preventDefault();
+			}
+		}
+	}
+
+	protected override _handlePointerMove(event: PointerEvent) {
+		// Call parent implementation first
+		super._handlePointerMove(event);
+
+		// Handle text/image/ink tools
+		if ((event.buttons & 1) === 1 && event.isPrimary && this._annotationAction) {
+			// Get current position in overlay coordinates
+			let currentX: number, currentY: number;
+			
+			if (this._primaryScrollContainer) {
+				// For nested scroll containers, calculate position relative to container's content
+				const containerClientRect = this._primaryScrollContainer.getBoundingClientRect();
+				currentX = (event.clientX - containerClientRect.left) + this._primaryScrollContainer.scrollLeft;
+				currentY = (event.clientY - containerClientRect.top) + this._primaryScrollContainer.scrollTop;
+			} else {
+				// For normal document scroll, use document-absolute coordinates
+				const elementAtPoint = this._iframeDocument.elementFromPoint(event.clientX, event.clientY);
+				if (elementAtPoint) {
+					const elementRect = getBoundingPageRect(elementAtPoint);
+					const elementClientRect = elementAtPoint.getBoundingClientRect();
+					const offsetX = event.clientX - elementClientRect.left;
+					const offsetY = event.clientY - elementClientRect.top;
+					currentX = elementRect.left + offsetX;
+					currentY = elementRect.top + offsetY;
+				} else {
+					currentX = event.clientX + this._iframeWindow.scrollX;
+					currentY = event.clientY + this._iframeWindow.scrollY;
+				}
+			}
+
+			if (this._annotationAction.type === 'ink' && this._annotationAction.paths) {
+				// Add point to ink path
+				this._annotationAction.paths[0].push(currentX, currentY);
+				this._previewAnnotation = this._createInkAnnotation(this._annotationAction);
+				this._renderAnnotations();
+			}
+			else if (this._annotationAction.type === 'image') {
+				// Update image rectangle
+				const imageParams = {
+					startX: this._annotationAction.startX!,
+					startY: this._annotationAction.startY!,
+					endX: currentX,
+					endY: currentY
+				};
+				this._previewAnnotation = this._createImageAnnotation(imageParams);
+				this._renderAnnotations();
+			}
+			// Text annotations are created on pointer up
+		}
+	}
+
+	protected override _handlePointerUp(event: PointerEvent) {
+		// Call parent implementation first
+		super._handlePointerUp(event);
+
+		// Handle text/image/ink tools
+		if (event.isPrimary && this._annotationAction) {
+			if (this._annotationAction.type === 'text') {
+				// Create text annotation at click position
+				if (this._pointerDownPosition) {
+					const annotation = this._createTextAnnotation(this._pointerDownPosition);
+					if (annotation) {
+						const addedAnnotation = this._options.onAddAnnotation(annotation, true);
+						// Select the annotation and open popup
+						if (addedAnnotation?.id) {
+							this._options.onSelectAnnotations([addedAnnotation.id], event);
+							this._renderAnnotations(true);
+							this._openAnnotationPopup(addedAnnotation);
+						}
+						else {
+							this._openAnnotationPopup();
+						}
+					}
+				}
+			}
+			else if (this._annotationAction.type === 'image') {
+				// Create image annotation if rectangle is large enough
+				if (this._previewAnnotation) {
+					const rect = (this._previewAnnotation as any)._positionData?.rects?.[0];
+					if (rect && Math.abs(rect[2] - rect[0]) > 10 && Math.abs(rect[3] - rect[1]) > 10) {
+						this._options.onAddAnnotation(this._previewAnnotation, true);
+					}
+					this._previewAnnotation = null;
+					this._renderAnnotations();
+				}
+			}
+			else if (this._annotationAction.type === 'ink') {
+				// Create ink annotation if path has enough points
+				if (this._previewAnnotation && this._annotationAction.paths) {
+					const pathLength = this._annotationAction.paths[0].length;
+					if (pathLength >= 4) {
+						this._options.onAddAnnotation(this._previewAnnotation, true);
+					}
+				}
+				this._previewAnnotation = null;
+				this._renderAnnotations();
+			}
+
+			// Reset action state
+			this._annotationAction = null;
+			this._pointerDownPosition = null;
+		}
+	}
+
+	// Override _openAnnotationPopup to handle text/image/ink annotations with absolute positioning
+	protected override _openAnnotationPopup(annotation?: WADMAnnotation) {
+		if (!annotation) {
+			if (this._selectedAnnotationIDs.length !== 1) {
+				return;
+			}
+			annotation = this._annotationsByID.get(this._selectedAnnotationIDs[0]);
+			if (!annotation) {
+				return;
+			}
+		}
+
+		// For text/image/ink annotations, find the rendered element and get its bounding rect
+		// This mirrors how 'note' annotations are handled in DOMView._openAnnotationPopup
+		if (annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'ink') {
+			const annotationElem = this._annotationRenderRootEl?.querySelector(`[data-annotation-id="${annotation.id}"]`);
+			if (annotationElem) {
+				// Only scale the rect (same as note annotations) - don't double-transform
+				const domRect = this._scaleDOMRect(annotationElem.getBoundingClientRect());
+				const popupRect: [number, number, number, number] = [
+					domRect.left,
+					domRect.top,
+					domRect.right,
+					domRect.bottom
+				];
+				this._options.onSetAnnotationPopup({ rect: popupRect, annotation });
+				return;
+			}
+		}
+
+		// For other annotation types, use parent implementation
+		super._openAnnotationPopup(annotation);
 	}
 
 

@@ -76,6 +76,36 @@ class DOCXView extends DOMView {
 		}
 	}
 
+	/**
+	 * Override setAnnotations to reconstruct _positionData for text/image/ink annotations
+	 * that were loaded from the database. The position data is stored inside
+	 * the position object but needs to be extracted to _positionData for rendering.
+	 */
+	setAnnotations(annotations) {
+		// Reconstruct _positionData from position for text/image/ink annotations
+		for (const annotation of annotations) {
+			if (annotation.type === 'text' || annotation.type === 'image' || annotation.type === 'ink') {
+				const position = annotation.position;
+				if (position && !annotation._positionData) {
+					// Extract position data from the position object
+					if (position.rects) {
+						annotation._positionData = {
+							rects: position.rects,
+							fontSize: position.fontSize,
+							rotation: position.rotation || 0
+						};
+					} else if (position.paths) {
+						annotation._positionData = {
+							paths: position.paths,
+							width: position.width || 2
+						};
+					}
+				}
+			}
+		}
+		super.setAnnotations(annotations);
+	}
+
 	_getSrcDoc() {
 		return '<!DOCTYPE html><html><head><meta charset="utf-8"></head><body></body></html>';
 	}
@@ -1121,42 +1151,30 @@ class DOCXView extends DOMView {
 		debugLog('[DOCXView._createTextAnnotation] Final sort index:', sortIndex, '(length:', sortIndex.length, ')');
 		
 		debugLog('[DOCXView._createTextAnnotation] Creating annotation object');
+		
+		// Store position data INSIDE the position object so it gets persisted to annotationPosition
+		const positionWithData = {
+			...selector,
+			rects: [rect],
+			fontSize,
+			rotation: 0
+		};
+		
 		const annotation = {
 			type: 'text',
 			color: this._tool.color,
 			sortIndex,
-			position: selector
+			position: positionWithData
 		};
-		debugLog('[DOCXView._createTextAnnotation] Base annotation object:', {
-			type: annotation.type,
-			color: annotation.color,
-			sortIndex: annotation.sortIndex,
-			hasPosition: !!annotation.position,
-			positionType: annotation.position?.type
-		});
 		
-		// Store position data for rendering
+		// Also store as _positionData for immediate rendering
 		annotation._positionData = {
 			rects: [rect],
 			fontSize,
 			rotation: 0
 		};
-		debugLog('[DOCXView._createTextAnnotation] Position data added:', {
-			hasPositionData: !!annotation._positionData,
-			hasRects: !!annotation._positionData.rects,
-			rectsCount: annotation._positionData.rects?.length || 0,
-			fontSize: annotation._positionData.fontSize,
-			rotation: annotation._positionData.rotation
-		});
-		debugLog('[DOCXView._createTextAnnotation] Complete annotation object:', {
-			type: annotation.type,
-			color: annotation.color,
-			sortIndex: annotation.sortIndex,
-			hasPosition: !!annotation.position,
-			hasPositionData: !!annotation._positionData,
-			positionDataRects: annotation._positionData?.rects?.length || 0
-		});
-		debugLog('[DOCXView._createTextAnnotation] SUCCESS: Text annotation created and ready to return');
+		
+		debugLog('[DOCXView._createTextAnnotation] Text annotation created with persisted position data');
 		
 		return annotation;
 	}
@@ -1198,18 +1216,24 @@ class DOCXView extends DOMView {
 		const sortIndex = String(Math.floor(rect[1])).padStart(SORT_INDEX_LENGTH, '0');
 		debugLog('[DOCXView._createImageAnnotation] Sort index:', sortIndex);
 		
+		// Store position data INSIDE the position object so it gets persisted
+		const positionWithData = {
+			...selector,
+			rects: [rect]
+		};
+		
 		const annotation = {
 			type: 'image',
 			color: this._tool.color,
 			sortIndex,
-			position: selector
+			position: positionWithData
 		};
 		
-		// Store position data for rendering
+		// Also store as _positionData for immediate rendering
 		annotation._positionData = {
 			rects: [rect]
 		};
-		debugLog('[DOCXView._createImageAnnotation] Annotation created:', { type: annotation.type, hasPositionData: !!annotation._positionData });
+		debugLog('[DOCXView._createImageAnnotation] Annotation created with persisted position data');
 		
 		return annotation;
 	}
@@ -1248,24 +1272,26 @@ class DOCXView extends DOMView {
 		const sortIndex = String(Math.floor(action.paths[0][1])).padStart(SORT_INDEX_LENGTH, '0');
 		debugLog('[DOCXView._createInkAnnotation] Sort index:', sortIndex);
 		
+		// Store position data INSIDE the position object so it gets persisted
+		const positionWithData = {
+			...selector,
+			paths: action.paths,
+			width: this._tool.size || 2
+		};
+		
 		const annotation = {
 			type: 'ink',
 			color: this._tool.color,
 			sortIndex,
-			position: selector
+			position: positionWithData
 		};
 		
-		// Store position data for rendering
+		// Also store as _positionData for immediate rendering
 		annotation._positionData = {
 			paths: action.paths,
 			width: this._tool.size || 2
 		};
-		debugLog('[DOCXView._createInkAnnotation] Annotation created:', { 
-			type: annotation.type, 
-			hasPositionData: !!annotation._positionData,
-			pathPoints: annotation._positionData.paths[0].length,
-			width: annotation._positionData.width
-		});
+		debugLog('[DOCXView._createInkAnnotation] Annotation created with persisted position data');
 		
 		return annotation;
 	}

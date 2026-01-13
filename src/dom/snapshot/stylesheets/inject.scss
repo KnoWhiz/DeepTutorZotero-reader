@@ -6,6 +6,22 @@
 	outline: none;
 }
 
+// Make all content immutable - snapshot viewer is read-only
+// Form elements are disabled via JavaScript, style them as disabled
+input:disabled, textarea:disabled, select:disabled, button:disabled {
+	opacity: 0.7;
+	cursor: not-allowed;
+}
+
+// Hide text cursor in contenteditable elements (disabled via JS)
+[contenteditable="false"] {
+	caret-color: transparent !important;
+	
+	&:focus {
+		outline: none;
+	}
+}
+
 body.force-static-theme {
 	background: var(--background-color) !important;
 	color: var(--text-color) !important;
@@ -15,4 +31,24 @@ body.force-static-theme {
 		background-color: transparent !important;
 		color: var(--text-color);
 	}
+}
+
+// Make annotation overlay document-sized (not viewport-sized) for HTML snapshots
+// This allows us to use document-absolute coordinates like DOCX does
+#annotation-overlay {
+	position: absolute;
+	left: 0;
+	top: 0;
+	// Width and height will be set via JavaScript to match document dimensions
+	min-width: 100%;
+	min-height: 100%;
+}
+
+// Ensure html and body are positioned so absolute positioning works correctly
+html {
+	position: relative;
+}
+
+body {
+	position: relative;
 }
