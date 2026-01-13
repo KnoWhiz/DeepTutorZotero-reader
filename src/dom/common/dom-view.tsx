@@ -704,8 +704,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 
 		// Always pass onTextChange - it should always be defined as a class property
 		// Ensure it's a function, otherwise provide a no-op to ensure the prop is always defined
-		// IMPORTANT: Use console.error to make it more visible
-		console.error('[DOMView._renderAnnotations] ===== CHECKING _handleTextAnnotationChange =====', {
+		console.debug('[DOMView._renderAnnotations] ===== CHECKING _handleTextAnnotationChange =====', {
 			hasMethod: '_handleTextAnnotationChange' in this,
 			isFunction: typeof this._handleTextAnnotationChange === 'function',
 			type: typeof this._handleTextAnnotationChange,
@@ -724,7 +723,7 @@ abstract class DOMView<State extends DOMViewState, Data> {
 					text
 				});
 			});
-		console.error('[DOMView._renderAnnotations] onTextChangeProp created:', {
+		console.debug('[DOMView._renderAnnotations] onTextChangeProp created:', {
 			isFunction: typeof onTextChangeProp === 'function',
 			type: typeof onTextChangeProp
 		});

@@ -32,3 +32,23 @@ body.force-static-theme {
 		color: var(--text-color);
 	}
 }
+
+// Make annotation overlay document-sized (not viewport-sized) for HTML snapshots
+// This allows us to use document-absolute coordinates like DOCX does
+#annotation-overlay {
+	position: absolute;
+	left: 0;
+	top: 0;
+	// Width and height will be set via JavaScript to match document dimensions
+	min-width: 100%;
+	min-height: 100%;
+}
+
+// Ensure html and body are positioned so absolute positioning works correctly
+html {
+	position: relative;
+}
+
+body {
+	position: relative;
+}

@@ -190,8 +190,25 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 		style.innerHTML = injectCSS;
 		this._iframeDocument.head.append(style);
 
+		// Make annotation overlay document-sized (not viewport-sized)
+		// This allows annotations to use document-absolute coordinates
+		this._updateAnnotationOverlaySize();
+		
+		// Update overlay size when document dimensions change
+		const resizeObserver = new ResizeObserver(() => {
+			this._updateAnnotationOverlaySize();
+		});
+		resizeObserver.observe(this._iframeDocument.body);
+		resizeObserver.observe(this._iframeDocument.documentElement);
+		this._iframeWindow.addEventListener('resize', () => {
+			this._updateAnnotationOverlaySize();
+		});
+
 		// Make document content immutable (read-only viewer)
 		this._makeContentImmutable();
+		
+		// Detect and handle nested scroll containers (like Notion)
+		this._setupOverlayForNestedScroll();
 
 		// Validate viewState and its properties
 		// Also make sure this doesn't trigger _updateViewState
@@ -405,6 +422,15 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 			position.x + fontSize / 2,
 			position.y + fontSize / 2
 		];
+		
+		console.debug('[SnapshotView._createTextAnnotation] Creating text annotation:', {
+			positionX: position.x,
+			positionY: position.y,
+			fontSize,
+			rect,
+			windowScrollX: this._iframeWindow.scrollX,
+			windowScrollY: this._iframeWindow.scrollY
+		});
 
 		// Create a range for the selector (use body as anchor since text annotations are absolutely positioned)
 		const range = this._iframeDocument.createRange();
@@ -454,6 +480,16 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 			Math.max(startX, endX),
 			Math.max(startY, endY)
 		];
+		
+		console.debug('[SnapshotView._createImageAnnotation] Creating image annotation:', {
+			startX,
+			startY,
+			endX,
+			endY,
+			rect,
+			windowScrollX: this._iframeWindow.scrollX,
+			windowScrollY: this._iframeWindow.scrollY
+		});
 
 		// Create a range for the selector (use body as anchor)
 		const range = this._iframeDocument.createRange();
@@ -736,9 +772,133 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 	}
 
 	protected override _handleScroll(event: Event) {
+		console.debug('[SnapshotView._handleScroll] Document scroll detected!', {
+			eventType: event.type,
+			target: (event.target as Element)?.tagName,
+			scrollX: this._iframeWindow.scrollX,
+			scrollY: this._iframeWindow.scrollY
+		});
+		
 		super._handleScroll(event);
 		this._updateViewState();
 		this._pushHistoryPoint(true);
+		
+		// Update overlay size on scroll in case document dimensions changed
+		this._updateAnnotationOverlaySize();
+	}
+
+	// Override to handle nested scroll containers (like Notion documents)
+	protected override _handleScrollCapture(event: Event) {
+		const target = event.target as Node;
+		
+		// Only handle nested container scrolls (not document scroll)
+		if (target !== this._iframeDocument as Node) {
+			const el = target as HTMLElement;
+			console.debug('[SnapshotView._handleScrollCapture] Nested container scroll detected!', {
+				targetTag: el?.tagName,
+				targetId: el?.id,
+				targetClass: el?.className,
+				scrollTop: el?.scrollTop,
+				scrollLeft: el?.scrollLeft
+			});
+		}
+		
+		// Call base implementation (re-renders annotations)
+		super._handleScrollCapture(event);
+		
+		// Also update overlay size for nested scrolls
+		this._updateAnnotationOverlaySize();
+	}
+
+	// Update annotation overlay to match document/scroll container dimensions
+	private _updateAnnotationOverlaySize() {
+		const overlay = this._iframeDocument.getElementById('annotation-overlay') as HTMLElement;
+		if (!overlay) {
+			console.warn('[SnapshotView._updateAnnotationOverlaySize] Overlay not found');
+			return;
+		}
+
+		// Use scroll container if we have one, otherwise use document
+		const sizeSource = this._primaryScrollContainer || this._iframeDocument.documentElement;
+		
+		// Overlay should match scroll dimensions of the source
+		const scrollWidth = sizeSource.scrollWidth;
+		const scrollHeight = sizeSource.scrollHeight;
+		
+		// Set overlay to match dimensions
+		overlay.style.width = `${scrollWidth}px`;
+		overlay.style.height = `${scrollHeight}px`;
+		
+		console.debug('[SnapshotView._updateAnnotationOverlaySize] Updated overlay size:', {
+			source: this._primaryScrollContainer ? 'scrollContainer' : 'document',
+			scrollWidth,
+			scrollHeight,
+			overlayWidth: overlay.style.width,
+			overlayHeight: overlay.style.height
+		});
+	}
+
+	// Track the primary scroll container if different from document
+	private _primaryScrollContainer: HTMLElement | null = null;
+
+	// Detect nested scroll containers and move overlay inside them
+	private _setupOverlayForNestedScroll() {
+		const overlay = this._iframeDocument.getElementById('annotation-overlay');
+		if (!overlay) return;
+
+		// Find the primary scroll container
+		// Look for elements with overflow: auto/scroll that have significant scroll height
+		const findScrollContainer = (root: Element): HTMLElement | null => {
+			const elements = root.querySelectorAll('*');
+			for (const el of elements) {
+				if (el === overlay) continue;
+				const style = this._iframeWindow.getComputedStyle(el);
+				const overflowY = style.overflowY;
+				const overflowX = style.overflowX;
+				
+				if ((overflowY === 'auto' || overflowY === 'scroll' || 
+				     overflowX === 'auto' || overflowX === 'scroll') &&
+				    el.scrollHeight > el.clientHeight + 10) {
+					return el as HTMLElement;
+				}
+			}
+			return null;
+		};
+
+		const scrollContainer = findScrollContainer(this._iframeDocument.body);
+		
+		if (scrollContainer) {
+			console.debug('[SnapshotView._setupOverlayForNestedScroll] Found nested scroll container:', {
+				tagName: scrollContainer.tagName,
+				id: scrollContainer.id,
+				className: scrollContainer.className,
+				scrollHeight: scrollContainer.scrollHeight,
+				clientHeight: scrollContainer.clientHeight
+			});
+
+			this._primaryScrollContainer = scrollContainer;
+
+			// Ensure the scroll container has position: relative for absolute positioning
+			const containerStyle = this._iframeWindow.getComputedStyle(scrollContainer);
+			if (containerStyle.position === 'static') {
+				scrollContainer.style.position = 'relative';
+			}
+
+			// Move overlay inside the scroll container
+			scrollContainer.appendChild(overlay);
+
+			// Update overlay size to match scroll container's scroll dimensions
+			overlay.style.width = `${scrollContainer.scrollWidth}px`;
+			overlay.style.height = `${scrollContainer.scrollHeight}px`;
+			overlay.style.position = 'absolute';
+			overlay.style.left = '0';
+			overlay.style.top = '0';
+			overlay.style.pointerEvents = 'none';
+
+			console.debug('[SnapshotView._setupOverlayForNestedScroll] Moved overlay into scroll container');
+		} else {
+			console.debug('[SnapshotView._setupOverlayForNestedScroll] No nested scroll container found, using document body');
+		}
 	}
 
 	protected _handleVisibilityChange() {
@@ -766,10 +926,69 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 				}
 
 				// Store pointer down position in document coordinates
-				this._pointerDownPosition = {
-					x: event.clientX + this._iframeWindow.scrollX,
-					y: event.clientY + this._iframeWindow.scrollY
-				};
+				// Use elementFromPoint to account for scroll containers (like Notion)
+				const elementAtPoint = this._iframeDocument.elementFromPoint(event.clientX, event.clientY);
+				console.debug('[SnapshotView._handlePointerDown] Coordinate calculation:', {
+					clientX: event.clientX,
+					clientY: event.clientY,
+					windowScrollX: this._iframeWindow.scrollX,
+					windowScrollY: this._iframeWindow.scrollY,
+					elementAtPoint: elementAtPoint?.tagName,
+					elementAtPointId: elementAtPoint?.id,
+					elementAtPointClass: elementAtPoint?.className
+				});
+				
+				if (elementAtPoint) {
+					// Get the element's viewport-relative position
+					const elementClientRect = elementAtPoint.getBoundingClientRect();
+					// Calculate offset from element's top-left to click position
+					const offsetX = event.clientX - elementClientRect.left;
+					const offsetY = event.clientY - elementClientRect.top;
+					
+					let finalX: number, finalY: number;
+					
+					if (this._primaryScrollContainer) {
+						// For nested scroll containers, calculate position relative to the container's content
+						// This accounts for the container's scroll position
+						const containerClientRect = this._primaryScrollContainer.getBoundingClientRect();
+						finalX = (event.clientX - containerClientRect.left) + this._primaryScrollContainer.scrollLeft;
+						finalY = (event.clientY - containerClientRect.top) + this._primaryScrollContainer.scrollTop;
+					} else {
+						// For normal document scroll, use document-absolute coordinates
+						const elementRect = getBoundingPageRect(elementAtPoint);
+						finalX = elementRect.left + offsetX;
+						finalY = elementRect.top + offsetY;
+					}
+					
+					this._pointerDownPosition = { x: finalX, y: finalY };
+					
+					console.debug('[SnapshotView._handlePointerDown] Calculated position:', {
+						hasScrollContainer: !!this._primaryScrollContainer,
+						containerScrollLeft: this._primaryScrollContainer?.scrollLeft,
+						containerScrollTop: this._primaryScrollContainer?.scrollTop,
+						finalX: this._pointerDownPosition.x,
+						finalY: this._pointerDownPosition.y
+					});
+				} else {
+					// Fallback when no element at point
+					let finalX: number, finalY: number;
+					
+					if (this._primaryScrollContainer) {
+						const containerClientRect = this._primaryScrollContainer.getBoundingClientRect();
+						finalX = (event.clientX - containerClientRect.left) + this._primaryScrollContainer.scrollLeft;
+						finalY = (event.clientY - containerClientRect.top) + this._primaryScrollContainer.scrollTop;
+					} else {
+						finalX = event.clientX + this._iframeWindow.scrollX;
+						finalY = event.clientY + this._iframeWindow.scrollY;
+					}
+					
+					this._pointerDownPosition = { x: finalX, y: finalY };
+					
+					console.debug('[SnapshotView._handlePointerDown] Using fallback:', {
+						finalX: this._pointerDownPosition.x,
+						finalY: this._pointerDownPosition.y
+					});
+				}
 
 				if (this._tool.type === 'ink') {
 					// Start ink annotation immediately
@@ -808,9 +1027,29 @@ class SnapshotView extends DOMView<SnapshotViewState, SnapshotViewData> {
 
 		// Handle text/image/ink tools
 		if ((event.buttons & 1) === 1 && event.isPrimary && this._annotationAction) {
-			// Get current position in document coordinates
-			const currentX = event.clientX + this._iframeWindow.scrollX;
-			const currentY = event.clientY + this._iframeWindow.scrollY;
+			// Get current position in overlay coordinates
+			let currentX: number, currentY: number;
+			
+			if (this._primaryScrollContainer) {
+				// For nested scroll containers, calculate position relative to container's content
+				const containerClientRect = this._primaryScrollContainer.getBoundingClientRect();
+				currentX = (event.clientX - containerClientRect.left) + this._primaryScrollContainer.scrollLeft;
+				currentY = (event.clientY - containerClientRect.top) + this._primaryScrollContainer.scrollTop;
+			} else {
+				// For normal document scroll, use document-absolute coordinates
+				const elementAtPoint = this._iframeDocument.elementFromPoint(event.clientX, event.clientY);
+				if (elementAtPoint) {
+					const elementRect = getBoundingPageRect(elementAtPoint);
+					const elementClientRect = elementAtPoint.getBoundingClientRect();
+					const offsetX = event.clientX - elementClientRect.left;
+					const offsetY = event.clientY - elementClientRect.top;
+					currentX = elementRect.left + offsetX;
+					currentY = elementRect.top + offsetY;
+				} else {
+					currentX = event.clientX + this._iframeWindow.scrollX;
+					currentY = event.clientY + this._iframeWindow.scrollY;
+				}
+			}
 
 			if (this._annotationAction.type === 'ink' && this._annotationAction.paths) {
 				// Add point to ink path

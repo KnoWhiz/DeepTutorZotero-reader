@@ -401,6 +401,17 @@ let TextAnnotation: React.FC<TextAnnotationProps> = (props) => {
 		height: rect[3] - rect[1]
 	};
 	
+	console.debug('[TextAnnotation] Rendering text annotation:', {
+		annotationId: annotation.id,
+		rectFromPositionData: rect,
+		pageRectX: pageRect.x,
+		pageRectY: pageRect.y,
+		pageRectWidth: pageRect.width,
+		pageRectHeight: pageRect.height,
+		windowScrollX: doc?.defaultView?.scrollX,
+		windowScrollY: doc?.defaultView?.scrollY
+	});
+	
 	// Sync prop value to local state only when it changes externally (like PDF checks data-comment attribute)
 	// This prevents cursor position resets during typing
 	useEffect(() => {
@@ -841,6 +852,17 @@ let ImageAnnotation: React.FC<ImageAnnotationProps> = (props) => {
 		height: rect[3] - rect[1]
 	};
 	
+	console.debug('[ImageAnnotation] Rendering image annotation:', {
+		annotationId: annotation.id,
+		rectFromPositionData: rect,
+		pageRectX: pageRect.x,
+		pageRectY: pageRect.y,
+		pageRectWidth: pageRect.width,
+		pageRectHeight: pageRect.height,
+		windowScrollX: doc?.defaultView?.scrollX,
+		windowScrollY: doc?.defaultView?.scrollY
+	});
+	
 	return (
 		<g
 			data-annotation-id={annotation.id}
@@ -894,19 +916,29 @@ let InkAnnotation: React.FC<InkAnnotationProps> = (props) => {
 	if (!positionData || !positionData.paths || !positionData.paths[0] || positionData.paths[0].length < 4) {
 		return null;
 	}
-	
+
 	const path = positionData.paths[0];
 	const width = positionData.width || 2;
 	const doc = annotation.range.commonAncestorContainer.ownerDocument;
 	if (!doc || !doc.defaultView) {
 		return null;
 	}
-	
+
 	// Build SVG path string
 	let pathData = `M ${path[0]} ${path[1]}`;
 	for (let i = 2; i < path.length; i += 2) {
 		pathData += ` L ${path[i]} ${path[i + 1]}`;
 	}
+	
+	console.debug('[InkAnnotation] Rendering ink annotation:', {
+		annotationId: annotation.id,
+		pathLength: path.length,
+		firstPoint: [path[0], path[1]],
+		lastPoint: [path[path.length - 2], path[path.length - 1]],
+		width,
+		windowScrollX: doc?.defaultView?.scrollX,
+		windowScrollY: doc?.defaultView?.scrollY
+	});
 	
 	return (
 		<g
