@@ -1,0 +1,455 @@
+/**
+ * Notebook View Styles
+ * Injected into the notebook iframe
+ */
+
+:root {
+	--notebook-bg: #ffffff;
+	--notebook-cell-bg: #ffffff;
+	--notebook-cell-border: #e0e0e0;
+	--notebook-cell-border-active: #2196f3;
+	--notebook-code-bg: #f5f5f5;
+	--notebook-output-bg: #fafafa;
+	--notebook-text: #24292e;
+	--notebook-text-muted: #6a737d;
+	--notebook-error: #cb2431;
+	--notebook-success: #22863a;
+	--notebook-run-button: #2196f3;
+	--notebook-run-button-hover: #1976d2;
+	--notebook-execution-count: #6a737d;
+}
+
+// Dark mode
+@media (prefers-color-scheme: dark) {
+	:root {
+		--notebook-bg: #1e1e1e;
+		--notebook-cell-bg: #252526;
+		--notebook-cell-border: #3c3c3c;
+		--notebook-cell-border-active: #569cd6;
+		--notebook-code-bg: #1e1e1e;
+		--notebook-output-bg: #2d2d2d;
+		--notebook-text: #d4d4d4;
+		--notebook-text-muted: #858585;
+		--notebook-error: #f48771;
+		--notebook-success: #4ec9b0;
+		--notebook-run-button: #569cd6;
+		--notebook-run-button-hover: #4fc3f7;
+		--notebook-execution-count: #858585;
+	}
+}
+
+* {
+	box-sizing: border-box;
+}
+
+html, body {
+	margin: 0;
+	padding: 0;
+	background-color: var(--notebook-bg);
+	color: var(--notebook-text);
+	font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+	font-size: 14px;
+	line-height: 1.5;
+}
+
+.notebook-container {
+	max-width: 1200px;
+	margin: 0 auto;
+	padding: 20px;
+}
+
+.notebook-header {
+	margin-bottom: 20px;
+	padding-bottom: 10px;
+	border-bottom: 1px solid var(--notebook-cell-border);
+
+	.notebook-title {
+		font-size: 24px;
+		font-weight: 600;
+		margin: 0 0 8px 0;
+	}
+
+	.notebook-metadata {
+		font-size: 12px;
+		color: var(--notebook-text-muted);
+	}
+}
+
+// Cell container
+.notebook-cell {
+	position: relative;
+	margin-bottom: 12px;
+	border: 1px solid var(--notebook-cell-border);
+	border-radius: 4px;
+	background-color: var(--notebook-cell-bg);
+	transition: border-color 0.15s ease;
+
+	&:hover {
+		border-color: var(--notebook-cell-border-active);
+	}
+
+	&.cell-focused {
+		border-color: var(--notebook-cell-border-active);
+		box-shadow: 0 0 0 1px var(--notebook-cell-border-active);
+	}
+
+	&.cell-running {
+		.cell-execution-indicator {
+			animation: pulse 1.5s infinite;
+		}
+	}
+}
+
+@keyframes pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.5; }
+}
+
+// Cell header with execution count and actions
+.cell-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	padding: 4px 8px;
+	background-color: var(--notebook-code-bg);
+	border-bottom: 1px solid var(--notebook-cell-border);
+	font-size: 12px;
+
+	.cell-execution-count {
+		color: var(--notebook-execution-count);
+		font-family: "Fira Code", "Consolas", monospace;
+		min-width: 40px;
+	}
+
+	.cell-type-indicator {
+		color: var(--notebook-text-muted);
+		text-transform: uppercase;
+		font-size: 10px;
+		letter-spacing: 0.5px;
+	}
+
+	.cell-actions {
+		display: flex;
+		gap: 4px;
+	}
+}
+
+// Run button
+.cell-run-button {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	padding: 4px 10px;
+	border: none;
+	border-radius: 3px;
+	background-color: var(--notebook-run-button);
+	color: white;
+	font-size: 12px;
+	font-weight: 500;
+	cursor: pointer;
+	transition: background-color 0.15s ease;
+
+	&:hover {
+		background-color: var(--notebook-run-button-hover);
+	}
+
+	&:disabled {
+		opacity: 0.6;
+		cursor: not-allowed;
+	}
+
+	.run-icon {
+		width: 12px;
+		height: 12px;
+	}
+}
+
+// Code cell content
+.cell-code-content {
+	position: relative;
+
+	.code-input {
+		width: 100%;
+		min-height: 40px;
+		padding: 12px;
+		border: none;
+		background-color: var(--notebook-code-bg);
+		color: var(--notebook-text);
+		font-family: "Fira Code", "Consolas", "Monaco", monospace;
+		font-size: 13px;
+		line-height: 1.5;
+		resize: none; // Disable manual resize - JS handles auto-resize
+		overflow: hidden; // Hide scrollbar - textarea grows to fit content
+		outline: none;
+		box-sizing: border-box;
+
+		&:focus {
+			background-color: var(--notebook-cell-bg);
+		}
+	}
+}
+
+// Markdown cell content
+.cell-markdown-content {
+	padding: 12px 16px;
+	min-height: 40px;
+
+	&[contenteditable="true"] {
+		outline: none;
+
+		&:focus {
+			background-color: var(--notebook-output-bg);
+		}
+
+		&:empty::before {
+			content: "Click to edit markdown...";
+			color: var(--notebook-text-muted);
+			font-style: italic;
+		}
+	}
+
+	// Markdown rendered styles
+	h1, h2, h3, h4, h5, h6 {
+		margin-top: 1em;
+		margin-bottom: 0.5em;
+		font-weight: 600;
+	}
+
+	h1 { font-size: 1.8em; }
+	h2 { font-size: 1.5em; }
+	h3 { font-size: 1.25em; }
+	h4 { font-size: 1.1em; }
+
+	p {
+		margin: 0.5em 0;
+	}
+
+	code {
+		padding: 2px 6px;
+		background-color: var(--notebook-code-bg);
+		border-radius: 3px;
+		font-family: "Fira Code", "Consolas", monospace;
+		font-size: 0.9em;
+	}
+
+	pre {
+		padding: 12px;
+		background-color: var(--notebook-code-bg);
+		border-radius: 4px;
+		overflow-x: auto;
+
+		code {
+			padding: 0;
+			background: none;
+		}
+	}
+
+	ul, ol {
+		padding-left: 1.5em;
+		margin: 0.5em 0;
+	}
+
+	blockquote {
+		margin: 0.5em 0;
+		padding-left: 1em;
+		border-left: 3px solid var(--notebook-cell-border);
+		color: var(--notebook-text-muted);
+	}
+
+	a {
+		color: var(--notebook-run-button);
+		text-decoration: none;
+
+		&:hover {
+			text-decoration: underline;
+		}
+	}
+
+	img {
+		max-width: 100%;
+		height: auto;
+	}
+
+	table {
+		border-collapse: collapse;
+		margin: 0.5em 0;
+
+		th, td {
+			padding: 6px 12px;
+			border: 1px solid var(--notebook-cell-border);
+		}
+
+		th {
+			background-color: var(--notebook-code-bg);
+			font-weight: 600;
+		}
+	}
+}
+
+// Cell output area
+.cell-output {
+	border-top: 1px solid var(--notebook-cell-border);
+	background-color: var(--notebook-output-bg);
+
+	&:empty {
+		display: none;
+	}
+
+	.output-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		padding: 4px 8px;
+		font-size: 11px;
+		color: var(--notebook-text-muted);
+		border-bottom: 1px solid var(--notebook-cell-border);
+	}
+
+	.output-content {
+		padding: 8px 12px;
+		font-family: "Fira Code", "Consolas", monospace;
+		font-size: 13px;
+		line-height: 1.5;
+		overflow-x: auto;
+	}
+
+	.output-stdout {
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.output-stderr {
+		white-space: pre-wrap;
+		word-break: break-word;
+		color: var(--notebook-error);
+		background-color: rgba(203, 36, 49, 0.1);
+		padding: 8px;
+		border-radius: 3px;
+	}
+
+	.output-error {
+		white-space: pre-wrap;
+		word-break: break-word;
+		color: var(--notebook-error);
+	}
+
+	.output-text {
+		white-space: pre-wrap;
+		word-break: break-word;
+	}
+
+	.output-html {
+		// Scoped HTML output
+		overflow-x: auto;
+	}
+
+	.output-image {
+		max-width: 100%;
+		height: auto;
+	}
+
+	// Markdown rendered output
+	.output-markdown {
+		font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+		
+		&.output-success {
+			color: var(--notebook-success, #22863a);
+		}
+		
+		&.output-error {
+			color: var(--notebook-error);
+		}
+		
+		.status-summary {
+			font-family: "Fira Code", "Consolas", monospace;
+			font-size: 12px;
+			color: var(--notebook-success, #22863a);
+			margin-bottom: 12px;
+			padding-bottom: 8px;
+			border-bottom: 1px solid var(--notebook-cell-border);
+		}
+		
+		.response-content {
+			h1, h2, h3 {
+				margin: 0.8em 0 0.4em 0;
+				font-weight: 600;
+			}
+			
+			h1 { font-size: 1.3em; }
+			h2 { font-size: 1.15em; }
+			h3 { font-size: 1.05em; }
+			
+			strong { font-weight: 600; }
+			em { font-style: italic; }
+			
+			code {
+				font-family: "Fira Code", "Consolas", monospace;
+				font-size: 0.9em;
+				padding: 2px 5px;
+				border-radius: 3px;
+				background-color: var(--notebook-code-bg);
+			}
+			
+			pre {
+				font-family: "Fira Code", "Consolas", monospace;
+				font-size: 0.9em;
+				padding: 10px 12px;
+				background-color: var(--notebook-code-bg);
+				border-radius: 4px;
+				overflow-x: auto;
+				margin: 0.5em 0;
+				
+				code {
+					padding: 0;
+					background-color: transparent;
+				}
+			}
+		}
+	}
+}
+
+// Streaming output indicator
+.output-streaming {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 12px;
+	color: var(--notebook-text-muted);
+
+	.spinner {
+		width: 14px;
+		height: 14px;
+		border: 2px solid var(--notebook-cell-border);
+		border-top-color: var(--notebook-run-button);
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+	}
+}
+
+@keyframes spin {
+	to { transform: rotate(360deg); }
+}
+
+// Close/clear output button
+.output-close-button {
+	padding: 2px 6px;
+	border: none;
+	background: transparent;
+	color: var(--notebook-text-muted);
+	cursor: pointer;
+	font-size: 14px;
+	line-height: 1;
+
+	&:hover {
+		color: var(--notebook-text);
+	}
+}
+
+// Raw cell (minimal styling)
+.cell-raw-content {
+	padding: 12px;
+	font-family: "Fira Code", "Consolas", monospace;
+	font-size: 13px;
+	white-space: pre-wrap;
+	background-color: var(--notebook-code-bg);
+}

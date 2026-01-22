@@ -143,7 +143,7 @@ export function createViewContextMenu(reader, params) {
 					persistent: true,
 					onCommand: () => reader.zoomOut()
 				},
-				['epub', 'snapshot'].includes(reader._type) && {
+				['epub', 'snapshot', 'ipynb'].includes(reader._type) && {
 					label: reader._getString('reader-zoom-reset'),
 					disabled: !reader.canZoomReset,
 					persistent: true,
