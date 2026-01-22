@@ -5,6 +5,7 @@ import PDFView from '../pdf/pdf-view';
 import EPUBView from '../dom/epub/epub-view';
 import SnapshotView from '../dom/snapshot/snapshot-view';
 import DOCXView from '../docx/docx-view';
+import NotebookView from '../dom/notebook/notebook-view';
 import AnnotationManager from './annotation-manager';
 import {
 	createAnnotationContextMenu,
@@ -707,7 +708,7 @@ class Reader {
 		}
 
 		if (init) console.log('[Reader._updateState] STEP C4: entering fontFamily/hyphenate block, type:', this._type);
-		if (this._type === 'epub' || this._type === 'docx' || this._type === 'snapshot') {
+		if (this._type === 'epub' || this._type === 'docx' || this._type === 'snapshot' || this._type === 'ipynb') {
 			if (this._state.fontFamily !== previousState.fontFamily) {
 				if (init) console.log('[Reader._updateState] STEP C4a: fontFamily changed, calling setFontFamily');
 				this._primaryView?.setFontFamily(this._state.fontFamily);
@@ -1125,6 +1126,7 @@ class Reader {
 	}
 
 	_createView(primary, location) {
+		console.log(`[Reader._createView] START: type="${this._type}", primary=${primary}`);
 		let view;
 
 		let container = primary ? this._primaryViewContainer : this._secondaryViewContainer;
@@ -1348,6 +1350,9 @@ class Reader {
 			getLocalizedString
 		};
 
+		console.log(`[Reader._createView] About to select view for type="${this._type}"`);
+		console.log(`[Reader._createView] Type checks: pdf=${this._type === 'pdf'}, epub=${this._type === 'epub'}, docx=${this._type === 'docx'}, snapshot=${this._type === 'snapshot'}, ipynb=${this._type === 'ipynb'}`);
+
 		if (this._type === 'pdf') {
 			try {
 				view = new PDFView({
@@ -1413,6 +1418,18 @@ class Reader {
 				});
 			} catch (e) {
 				console.error('Failed to create SnapshotView:', e);
+				throw e;
+			}
+		} else if (this._type === 'ipynb') {
+			console.log('[Reader._createView] Creating NotebookView for ipynb file');
+			try {
+				view = new NotebookView({
+					...common,
+					onSetZoom
+				});
+				console.log('[Reader._createView] NotebookView created successfully:', view);
+			} catch (e) {
+				console.error('[Reader._createView] Failed to create NotebookView:', e);
 				throw e;
 			}
 		}

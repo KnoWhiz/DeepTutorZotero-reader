@@ -401,9 +401,9 @@ function AppearancePopup(props) {
 						</div>
 					</div>
 				</div>
-				{(type === 'epub' || type === 'snapshot') && (
+				{(type === 'epub' || type === 'snapshot' || type === 'ipynb') && (
 					<div className="group">
-						{type === 'snapshot' && (
+						{(type === 'snapshot') && (
 							<div className="option">
 								<label htmlFor="focus-mode-enabled">{l10n.getString('reader-focus-mode')}</label>
 								<input
@@ -417,13 +417,13 @@ function AppearancePopup(props) {
 								/>
 							</div>
 						)}
-						{(type === 'epub' || props.viewStats.focusModeEnabled) && (
+						{(type === 'epub' || type === 'ipynb' || props.viewStats.focusModeEnabled) && (
 							<ReflowableAppearanceSection
 								params={props.viewStats.appearance}
-								enablePageWidth={type === 'snapshot'
+								enablePageWidth={type === 'snapshot' || type === 'ipynb'
 									|| props.viewStats.flowMode !== 'paginated' || props.viewStats.spreadMode === 0}
 								onChange={props.onChangeAppearance}
-								indent={type === 'snapshot'}
+								indent={type === 'snapshot' || type === 'ipynb'}
 							/>
 						)}
 					</div>
