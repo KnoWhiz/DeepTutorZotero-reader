@@ -347,28 +347,8 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 		const allTextareas = this._iframeDocument.querySelectorAll('.code-input') as NodeListOf<HTMLTextAreaElement>;
 		allTextareas.forEach(textarea => this._autoResizeTextarea(textarea));
 
-		// Keyboard shortcuts - use capture phase to handle before DOMView
+		// Shift+Enter to run cell - note: editing key handling is in _handleKeyDown override
 		this._iframeDocument.addEventListener('keydown', (e) => {
-			const target = e.target as HTMLElement;
-			
-			// Check if we're editing in a contenteditable or textarea
-			const isEditing = target.isContentEditable 
-				|| target.tagName === 'TEXTAREA' 
-				|| target.tagName === 'INPUT'
-				|| target.closest('[contenteditable="true"]');
-			
-			// If editing, prevent propagation for text editing keys
-			// This stops DOMView from passing these to the main window (which would delete annotations)
-			if (isEditing) {
-				const editingKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 
-					'Home', 'End', 'Enter', 'Tab'];
-				// Allow normal typing and editing keys
-				if (editingKeys.includes(e.key) || e.key.length === 1) {
-					e.stopPropagation();
-				}
-			}
-			
-			// Shift+Enter to run cell
 			if (e.shiftKey && e.key === 'Enter') {
 				const activeCell = this._iframeDocument.querySelector('.notebook-cell.cell-focused');
 				if (activeCell) {
@@ -405,6 +385,35 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 		}
 
 		this._activeCellId = cellId;
+	}
+
+	/**
+	 * Override _handleKeyDown to prevent editing keys from being passed to the main window
+	 * when we're in an editable element (contenteditable or textarea)
+	 */
+	protected override _handleKeyDown(event: KeyboardEvent) {
+		const target = event.target as HTMLElement;
+		
+		// Check if we're editing in a contenteditable or textarea
+		const isEditing = target.isContentEditable 
+			|| target.tagName === 'TEXTAREA' 
+			|| target.tagName === 'INPUT'
+			|| target.closest('[contenteditable="true"]');
+		
+		if (isEditing) {
+			// List of keys that should be handled by the editable element, not passed to main window
+			const editingKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 
+				'Home', 'End', 'Enter', 'Tab'];
+			
+			// For editing keys or regular typing, don't pass to parent handler
+			if (editingKeys.includes(event.key) || event.key.length === 1) {
+				// Don't call super._handleKeyDown - just handle focus ring logic
+				return;
+			}
+		}
+		
+		// For non-editing scenarios, use normal handling
+		super._handleKeyDown(event);
 	}
 
 	private async _executeCell(cellId: string) {
