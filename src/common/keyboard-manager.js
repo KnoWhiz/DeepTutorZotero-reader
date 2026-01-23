@@ -306,7 +306,7 @@ export class KeyboardManager {
 			}
 			else if ((
 				this._reader._type === 'pdf' && code === 'Alt-Digit8'
-				|| ['epub', 'snapshot', 'ipynb'].includes(this._reader._type) && code === 'Alt-Digit4'
+				|| ['epub', 'snapshot'].includes(this._reader._type) && code === 'Alt-Digit4'
 			) && this._reader._state.tool.color) {
 				let idx = ANNOTATION_COLORS.findIndex(x => x[1] === this._reader._state.tool.color);
 				if (idx === ANNOTATION_COLORS.length - 1) {
