@@ -181,77 +181,80 @@ function Toolbar(props) {
 						&& (props.pageIndex + 1)} / {props.pagesCount}</div></span>
 				)}
 			</div>
-			<div className="center tools">
-				<Localized id="reader-toolbar-highlight" attrs={{ title: true, 'aria-description': true }}>
-					<button
-						tabIndex={-1}
-						className={cx('toolbar-button highlight', { active: props.tool.type === 'highlight' })}
-						disabled={props.readOnly}
-						onClick={() => handleToolClick('highlight')}
-					><IconHighlight/></button>
-				</Localized>
-				<Localized id="reader-toolbar-underline" attrs={{ title: true, 'aria-description': true }}>
-					<button
-						tabIndex={-1}
-						className={cx('toolbar-button underline', { active: props.tool.type === 'underline' })}
-						disabled={props.readOnly}
-						onClick={() => handleToolClick('underline')}
-					><IconUnderline/></button>
-				</Localized>
-				<Localized id="reader-toolbar-note" attrs={{ title: true, 'aria-description': true }}>
-					<button
-						tabIndex={-1}
-						className={cx('toolbar-button note', { active: props.tool.type === 'note' })}
-						disabled={props.readOnly}
-						onClick={() => handleToolClick('note')}
-					><IconNote/></button>
-				</Localized>
-				{(props.type === 'pdf' || props.type === 'docx' || props.type === 'snapshot' || props.type === 'ipynb') && (
-					<Localized id="reader-toolbar-text" attrs={{ title: true, 'aria-description': true }}>
+			{/* Annotation tools - disabled for ipynb */}
+			{props.type !== 'ipynb' && (
+				<div className="center tools">
+					<Localized id="reader-toolbar-highlight" attrs={{ title: true, 'aria-description': true }}>
 						<button
 							tabIndex={-1}
-							className={cx('toolbar-button text', { active: props.tool.type === 'text' })}
+							className={cx('toolbar-button highlight', { active: props.tool.type === 'highlight' })}
 							disabled={props.readOnly}
-							onClick={() => handleToolClick('text')}
-						><IconText/></button>
+							onClick={() => handleToolClick('highlight')}
+						><IconHighlight/></button>
 					</Localized>
-				)}
-				{(props.type === 'pdf' || props.type === 'docx' || props.type === 'snapshot' || props.type === 'ipynb') && (
-					<Localized id="reader-toolbar-area" attrs={{ title: true, 'aria-description': true }}>
+					<Localized id="reader-toolbar-underline" attrs={{ title: true, 'aria-description': true }}>
 						<button
 							tabIndex={-1}
-							className={cx('toolbar-button area', { active: props.tool.type === 'image' })}
+							className={cx('toolbar-button underline', { active: props.tool.type === 'underline' })}
 							disabled={props.readOnly}
-							onClick={() => handleToolClick('image')}
-						><IconImage/></button>
+							onClick={() => handleToolClick('underline')}
+						><IconUnderline/></button>
 					</Localized>
-				)}
-				{(props.type === 'pdf' || props.type === 'docx' || props.type === 'snapshot' || props.type === 'ipynb') && (
-					<Localized id="reader-toolbar-draw" attrs={{ title: true, 'aria-description': true }}>
+					<Localized id="reader-toolbar-note" attrs={{ title: true, 'aria-description': true }}>
 						<button
 							tabIndex={-1}
-							className={cx('toolbar-button ink', { active: ['ink', 'eraser'].includes(props.tool.type) })}
+							className={cx('toolbar-button note', { active: props.tool.type === 'note' })}
 							disabled={props.readOnly}
-							onClick={() => handleToolClick('ink')}
-						><IconInk/></button>
+							onClick={() => handleToolClick('note')}
+						><IconNote/></button>
 					</Localized>
-				)}
-				<div className="divider"/>
-				<button
-					tabIndex={-1}
-					className="toolbar-button toolbar-dropdown-button"
-					disabled={props.readOnly || ['pointer', 'hand'].includes(props.tool.type)}
-					title={l10n.getString('reader-pick-color')}
-					onClick={handleToolColorClick}
-				>
-					{
-						props.tool.type === 'eraser'
-						? <IconEraser/>
-						: <IconColor20 color={props.tool.color || ['pointer', 'hand'].includes(props.tool.type) && 'transparent'}/>
-					}
-					<IconChevronDown8/>
-				</button>
-			</div>
+					{(props.type === 'pdf' || props.type === 'docx' || props.type === 'snapshot') && (
+						<Localized id="reader-toolbar-text" attrs={{ title: true, 'aria-description': true }}>
+							<button
+								tabIndex={-1}
+								className={cx('toolbar-button text', { active: props.tool.type === 'text' })}
+								disabled={props.readOnly}
+								onClick={() => handleToolClick('text')}
+							><IconText/></button>
+						</Localized>
+					)}
+					{(props.type === 'pdf' || props.type === 'docx' || props.type === 'snapshot') && (
+						<Localized id="reader-toolbar-area" attrs={{ title: true, 'aria-description': true }}>
+							<button
+								tabIndex={-1}
+								className={cx('toolbar-button area', { active: props.tool.type === 'image' })}
+								disabled={props.readOnly}
+								onClick={() => handleToolClick('image')}
+							><IconImage/></button>
+						</Localized>
+					)}
+					{(props.type === 'pdf' || props.type === 'docx' || props.type === 'snapshot') && (
+						<Localized id="reader-toolbar-draw" attrs={{ title: true, 'aria-description': true }}>
+							<button
+								tabIndex={-1}
+								className={cx('toolbar-button ink', { active: ['ink', 'eraser'].includes(props.tool.type) })}
+								disabled={props.readOnly}
+								onClick={() => handleToolClick('ink')}
+							><IconInk/></button>
+						</Localized>
+					)}
+					<div className="divider"/>
+					<button
+						tabIndex={-1}
+						className="toolbar-button toolbar-dropdown-button"
+						disabled={props.readOnly || ['pointer', 'hand'].includes(props.tool.type)}
+						title={l10n.getString('reader-pick-color')}
+						onClick={handleToolColorClick}
+					>
+						{
+							props.tool.type === 'eraser'
+							? <IconEraser/>
+							: <IconColor20 color={props.tool.color || ['pointer', 'hand'].includes(props.tool.type) && 'transparent'}/>
+						}
+						<IconChevronDown8/>
+					</button>
+				</div>
+			)}
 			<div className="end">
 				<CustomSections type="Toolbar"/>
 				<button
