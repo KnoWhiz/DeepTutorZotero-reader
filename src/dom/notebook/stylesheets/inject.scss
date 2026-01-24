@@ -453,3 +453,269 @@ html, body {
 	white-space: pre-wrap;
 	background-color: var(--notebook-code-bg);
 }
+
+// ============================================================================
+// Jupyter-Style Command/Edit Mode Styles
+// ============================================================================
+
+// Command mode (blue border, keyboard shortcuts active)
+.notebook-cell.cell-selected {
+	border-left: 4px solid #42a5f5;
+	box-shadow: 0 0 0 1px #42a5f5;
+	position: relative;
+
+	&::before {
+		content: "Command Mode (a: add above, b: add below, m: markdown, y: code, dd: delete)";
+		position: absolute;
+		top: -25px;
+		left: 0;
+		font-size: 11px;
+		color: #42a5f5;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.2s ease;
+		white-space: nowrap;
+		z-index: 10;
+	}
+
+	&:hover::before {
+		opacity: 1;
+	}
+}
+
+// Edit mode (green border, actively editing)
+.notebook-cell.cell-editing {
+	border-left: 4px solid #66bb6a;
+	box-shadow: 0 0 0 1px #66bb6a;
+	position: relative;
+
+	&::before {
+		content: "Edit Mode (Esc: command mode, Shift+Enter: run, Ctrl/Cmd+Enter: run & stay)";
+		position: absolute;
+		top: -25px;
+		left: 0;
+		font-size: 11px;
+		color: #66bb6a;
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 0.2s ease;
+		white-space: nowrap;
+		z-index: 10;
+	}
+
+	&:hover::before {
+		opacity: 1;
+	}
+}
+
+// Running state (orange animated border)
+.notebook-cell.cell-running {
+	border-left: 4px solid #ff9800;
+	animation: running-pulse 1.5s ease-in-out infinite;
+
+	.cell-execution-indicator {
+		color: #ff9800;
+	}
+}
+
+@keyframes running-pulse {
+	0%, 100% {
+		box-shadow: 0 0 0 1px rgba(255, 152, 0, 0.3);
+	}
+	50% {
+		box-shadow: 0 0 0 2px rgba(255, 152, 0, 0.6);
+	}
+}
+
+// Mode indicator in header
+.notebook-header {
+	.mode-indicator {
+		display: inline-block;
+		padding: 4px 12px;
+		border-radius: 3px;
+		font-size: 12px;
+		font-weight: 600;
+		margin-left: 12px;
+
+		&.mode-command {
+			background-color: rgba(66, 165, 245, 0.15);
+			color: #42a5f5;
+			border: 1px solid #42a5f5;
+		}
+
+		&.mode-edit {
+			background-color: rgba(102, 187, 106, 0.15);
+			color: #66bb6a;
+			border: 1px solid #66bb6a;
+		}
+	}
+
+	.unsaved-indicator {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		margin-left: 12px;
+		font-size: 12px;
+		color: #ff9800;
+
+		&::before {
+			content: "";
+			display: inline-block;
+			width: 8px;
+			height: 8px;
+			border-radius: 50%;
+			background-color: #ff9800;
+			animation: pulse 2s ease-in-out infinite;
+		}
+	}
+
+	.export-button {
+		padding: 6px 14px;
+		border: 1px solid var(--notebook-run-button);
+		border-radius: 4px;
+		background-color: transparent;
+		color: var(--notebook-run-button);
+		font-size: 13px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.2s ease;
+
+		&:hover {
+			background-color: var(--notebook-run-button);
+			color: white;
+		}
+
+		&:disabled {
+			opacity: 0.5;
+			cursor: not-allowed;
+		}
+	}
+}
+
+// Cell fade-in animation for newly added cells
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(-10px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}
+
+.notebook-cell.cell-new {
+	animation: fadeIn 0.3s ease-out;
+}
+
+// Focus improvements
+.notebook-cell {
+	&:focus-within {
+		outline: none;
+	}
+
+	// Make textarea/contenteditable focus more visible in edit mode
+	&.cell-editing {
+		.code-input:focus,
+		.cell-markdown-content[contenteditable="true"]:focus {
+			outline: none;
+			box-shadow: inset 0 0 0 2px rgba(102, 187, 106, 0.3);
+		}
+	}
+}
+
+// Dark mode adjustments for command/edit mode
+@media (prefers-color-scheme: dark) {
+	.notebook-cell.cell-selected {
+		border-left-color: #1e88e5;
+		box-shadow: 0 0 0 1px #1e88e5;
+
+		&::before {
+			color: #64b5f6;
+		}
+	}
+
+	.notebook-cell.cell-editing {
+		border-left-color: #43a047;
+		box-shadow: 0 0 0 1px #43a047;
+
+		&::before {
+			color: #81c784;
+		}
+	}
+
+	.notebook-cell.cell-running {
+		border-left-color: #f57c00;
+	}
+
+	.notebook-header {
+		.mode-indicator {
+			&.mode-command {
+				background-color: rgba(30, 136, 229, 0.2);
+				color: #64b5f6;
+				border-color: #1e88e5;
+			}
+
+			&.mode-edit {
+				background-color: rgba(67, 160, 71, 0.2);
+				color: #81c784;
+				border-color: #43a047;
+			}
+		}
+
+		.unsaved-indicator {
+			color: #ffb74d;
+
+			&::before {
+				background-color: #ffb74d;
+			}
+		}
+	}
+}
+
+// Accessibility improvements
+@media (prefers-reduced-motion: reduce) {
+	.notebook-cell.cell-selected,
+	.notebook-cell.cell-editing,
+	.notebook-cell.cell-running {
+		animation: none;
+	}
+
+	.notebook-cell.cell-new {
+		animation: none;
+	}
+
+	.unsaved-indicator::before {
+		animation: none;
+	}
+}
+
+// High contrast mode
+@media (prefers-contrast: high) {
+	.notebook-cell.cell-selected {
+		border-left-width: 5px;
+		box-shadow: 0 0 0 2px #42a5f5;
+	}
+
+	.notebook-cell.cell-editing {
+		border-left-width: 5px;
+		box-shadow: 0 0 0 2px #66bb6a;
+	}
+}
+
+// Responsive adjustments for mobile
+@media (max-width: 768px) {
+	.notebook-cell {
+		&.cell-selected::before,
+		&.cell-editing::before {
+			display: none; // Hide keyboard hints on mobile
+		}
+	}
+
+	.notebook-header {
+		.mode-indicator {
+			font-size: 11px;
+			padding: 3px 8px;
+		}
+	}
+}

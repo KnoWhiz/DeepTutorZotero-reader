@@ -62,6 +62,9 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 	private _notebook!: ParsedNotebook | null;
 	private _cellStates!: Map<string, CellState>;
 	private _activeCellId!: string | null;
+	private _cellMode!: 'command' | 'edit' | null; // Current mode for selected cell
+	private _isModified!: boolean; // Track if notebook has unsaved changes
+	private _deleteKeyCount!: number; // Track consecutive 'd' presses for dd delete
 
 	private get _searchContext() {
 		let searchContext = createSearchContext(getVisibleTextNodes(this._iframeDocument.body));
@@ -77,6 +80,9 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 		this._cellStates = new Map();
 		this._notebook = null;
 		this._activeCellId = null;
+		this._cellMode = null;
+		this._isModified = false;
+		this._deleteKeyCount = 0;
 		
 		console.log('[NotebookView._getSrcDoc] data available:', {
 			hasBuf: !!this._options.data.buf,
@@ -136,9 +142,15 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 <body>
 	<div class="notebook-container">
 		<div class="notebook-header">
-			<h1 class="notebook-title">${this._escapeHtml(title)}</h1>
-			<div class="notebook-metadata">
-				<span>Language: ${language}</span>
+			<div style="display: flex; align-items: center; justify-content: space-between;">
+				<div>
+					<h1 class="notebook-title">${this._escapeHtml(title)}</h1>
+					<div class="notebook-metadata">
+						<span>Language: ${language}</span>
+						<span class="unsaved-indicator" style="display: none;">Unsaved changes</span>
+					</div>
+				</div>
+				<button class="export-button" data-action="export">Export Notebook</button>
 			</div>
 		</div>
 		<div class="notebook-cells" data-notebook-language="${language}">
@@ -287,12 +299,19 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 
 	private _setupCellInteractions() {
 		console.log('[NotebookView._setupCellInteractions] Setting up cell interactions');
-		
-		// Handle Run button clicks
+
+		// Handle button clicks
 		this._iframeDocument.addEventListener('click', (e) => {
 			const target = e.target as HTMLElement;
 			console.log('[NotebookView] Click detected on:', target.tagName, target.className);
-			
+
+			// Export button
+			const exportButton = target.closest('[data-action="export"]') as HTMLElement;
+			if (exportButton) {
+				this._exportNotebook();
+				return;
+			}
+
 			// Run button
 			const runButton = target.closest('[data-action="run"]') as HTMLElement;
 			console.log('[NotebookView] Run button found:', runButton);
@@ -318,17 +337,37 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 				return;
 			}
 
-			// Cell focus handling
+			// Cell focus handling - click on cell enters command mode
 			const cell = target.closest('.notebook-cell') as HTMLElement;
 			if (cell) {
-				this._setActiveCell(cell.dataset.cellId || null);
+				const cellId = cell.dataset.cellId || null;
+				// Only enter command mode if not clicking on an editable element
+				const isEditableClick = target.classList.contains('code-input') ||
+					target.isContentEditable ||
+					target.closest('[contenteditable="true"]');
+
+				if (!isEditableClick) {
+					this._setActiveCell(cellId, 'command');
+				}
 			}
 		});
+
+		// Handle textarea/contenteditable focus - enters edit mode
+		this._iframeDocument.addEventListener('focus', (e) => {
+			const target = e.target as HTMLElement;
+
+			if (target.classList.contains('code-input') || target.isContentEditable) {
+				const cell = target.closest('.notebook-cell') as HTMLElement;
+				if (cell && cell.dataset.cellId) {
+					this._setActiveCell(cell.dataset.cellId, 'edit');
+				}
+			}
+		}, true);
 
 		// Handle textarea changes for code cells
 		this._iframeDocument.addEventListener('input', (e) => {
 			const target = e.target as HTMLElement;
-			
+
 			if (target.classList.contains('code-input')) {
 				const textarea = target as HTMLTextAreaElement;
 				const cellId = textarea.dataset.cellId;
@@ -337,9 +376,16 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 					if (state) {
 						state.source = textarea.value;
 					}
+					// Mark as modified
+					this._isModified = true;
+					this._updateUnsavedIndicator();
 				}
 				// Auto-resize the textarea
 				this._autoResizeTextarea(textarea);
+			} else if (target.isContentEditable) {
+				// Mark as modified when editing markdown
+				this._isModified = true;
+				this._updateUnsavedIndicator();
 			}
 		});
 
@@ -347,18 +393,118 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 		const allTextareas = this._iframeDocument.querySelectorAll('.code-input') as NodeListOf<HTMLTextAreaElement>;
 		allTextareas.forEach(textarea => this._autoResizeTextarea(textarea));
 
-		// Shift+Enter to run cell - note: editing key handling is in _handleKeyDown override
+		// Keyboard shortcuts
 		this._iframeDocument.addEventListener('keydown', (e) => {
-			if (e.shiftKey && e.key === 'Enter') {
-				const activeCell = this._iframeDocument.querySelector('.notebook-cell.cell-focused');
-				if (activeCell) {
-					const cellId = (activeCell as HTMLElement).dataset.cellId;
-					if (cellId) {
-						e.preventDefault();
-						e.stopPropagation();
-						this._executeCell(cellId);
+			const target = e.target as HTMLElement;
+			const isEditing = target.classList.contains('code-input') ||
+				target.isContentEditable ||
+				target.closest('[contenteditable="true"]');
+
+			// Edit mode keyboard shortcuts
+			if (isEditing && this._cellMode === 'edit') {
+				// Escape - exit edit mode, enter command mode
+				if (e.key === 'Escape') {
+					e.preventDefault();
+					if (this._activeCellId) {
+						this._setActiveCell(this._activeCellId, 'command');
 					}
+					return;
 				}
+
+				// Shift+Enter - run cell and select next
+				if (e.shiftKey && e.key === 'Enter') {
+					e.preventDefault();
+					if (this._activeCellId) {
+						this._executeCell(this._activeCellId);
+						// Select next cell after execution
+						setTimeout(() => this._selectAdjacentCell('down'), 100);
+					}
+					return;
+				}
+
+				// Ctrl/Cmd+Enter - run cell and stay
+				if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+					e.preventDefault();
+					if (this._activeCellId) {
+						this._executeCell(this._activeCellId);
+					}
+					return;
+				}
+
+				return; // Let other keys work normally in edit mode
+			}
+
+			// Command mode keyboard shortcuts
+			if (!isEditing && this._cellMode === 'command' && this._activeCellId) {
+				// Enter - enter edit mode
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					this._setActiveCell(this._activeCellId, 'edit');
+					return;
+				}
+
+				// Arrow Up - select previous cell
+				if (e.key === 'ArrowUp') {
+					e.preventDefault();
+					this._selectAdjacentCell('up');
+					return;
+				}
+
+				// Arrow Down - select next cell
+				if (e.key === 'ArrowDown') {
+					e.preventDefault();
+					this._selectAdjacentCell('down');
+					return;
+				}
+
+				// 'a' - add cell above
+				if (e.key === 'a' || e.key === 'A') {
+					e.preventDefault();
+					this._addCell('code', this._activeCellId, 'above');
+					return;
+				}
+
+				// 'b' - add cell below
+				if (e.key === 'b' || e.key === 'B') {
+					e.preventDefault();
+					this._addCell('code', this._activeCellId, 'below');
+					return;
+				}
+
+				// 'm' - convert to markdown
+				if (e.key === 'm' || e.key === 'M') {
+					e.preventDefault();
+					this._convertCellType(this._activeCellId, 'markdown');
+					return;
+				}
+
+				// 'y' - convert to code
+				if (e.key === 'y' || e.key === 'Y') {
+					e.preventDefault();
+					this._convertCellType(this._activeCellId, 'code');
+					return;
+				}
+
+				// 'd' - delete (needs two presses)
+				if (e.key === 'd' || e.key === 'D') {
+					e.preventDefault();
+					this._deleteKeyCount++;
+
+					// Reset after 1 second
+					setTimeout(() => {
+						this._deleteKeyCount = 0;
+					}, 1000);
+
+					// Delete on second press
+					if (this._deleteKeyCount >= 2) {
+						this._deleteCell(this._activeCellId);
+						this._deleteKeyCount = 0;
+					}
+					return;
+				}
+
+				// Reset delete key count on other keys
+				this._deleteKeyCount = 0;
 			}
 		}, true); // Use capture phase
 	}
@@ -371,20 +517,343 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 		textarea.style.height = `${textarea.scrollHeight + 2}px`;
 	}
 
-	private _setActiveCell(cellId: string | null) {
-		// Remove focus from all cells
+	private _setActiveCell(cellId: string | null, mode: 'command' | 'edit' | null = 'command') {
+		// Remove all mode classes from all cells
 		const allCells = this._iframeDocument.querySelectorAll('.notebook-cell');
-		allCells.forEach(cell => cell.classList.remove('cell-focused'));
+		allCells.forEach(cell => {
+			cell.classList.remove('cell-focused', 'cell-selected', 'cell-editing');
+		});
 
-		// Set focus on the active cell
-		if (cellId) {
-			const activeCell = this._iframeDocument.querySelector(`[data-cell-id="${cellId}"]`);
+		// Set focus on the active cell with appropriate mode
+		if (cellId && mode) {
+			const activeCell = this._iframeDocument.querySelector(`[data-cell-id="${cellId}"]`) as HTMLElement;
 			if (activeCell) {
-				activeCell.classList.add('cell-focused');
+				// Add appropriate class based on mode
+				if (mode === 'command') {
+					activeCell.classList.add('cell-selected');
+				} else if (mode === 'edit') {
+					activeCell.classList.add('cell-editing');
+
+					// Focus the editable element
+					const textarea = activeCell.querySelector('.code-input') as HTMLTextAreaElement;
+					const contentEditable = activeCell.querySelector('[contenteditable="true"]') as HTMLElement;
+					if (textarea) {
+						textarea.focus();
+					} else if (contentEditable) {
+						contentEditable.focus();
+					}
+				}
 			}
 		}
 
 		this._activeCellId = cellId;
+		this._cellMode = mode;
+	}
+
+	/**
+	 * Add a new cell above or below the specified cell
+	 */
+	private _addCell(cellType: 'code' | 'markdown', relativeToCellId: string, position: 'above' | 'below') {
+		if (!this._notebook) return;
+
+		// Sync any pending edits before modifying the notebook
+		this._syncCellEditsToState();
+
+		// Find the index of the reference cell
+		const refIndex = this._notebook.cells.findIndex(c => c.id === relativeToCellId);
+		if (refIndex === -1) return;
+
+		// Calculate insert index
+		const insertIndex = position === 'above' ? refIndex : refIndex + 1;
+
+		// Create new cell
+		const newCellId = `cell-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+		const newCell: NotebookCell = {
+			id: newCellId,
+			cell_type: cellType,
+			source: '',
+			outputs: [],
+			execution_count: null,
+			metadata: {},
+		};
+
+		// Insert into notebook cells array
+		this._notebook.cells.splice(insertIndex, 0, newCell);
+
+		// Initialize cell state
+		this._cellStates.set(newCellId, {
+			id: newCellId,
+			executionState: 'idle',
+			output: '',
+			isEditing: false,
+			source: '',
+		});
+
+		// Insert the cell into the DOM
+		this._insertCellIntoDOM(newCell, insertIndex);
+
+		// Mark as modified
+		this._isModified = true;
+		this._updateUnsavedIndicator();
+
+		// Set the new cell as active in edit mode
+		this._setActiveCell(newCellId, 'edit');
+	}
+
+	/**
+	 * Insert a cell into the DOM at the specified index
+	 */
+	private _insertCellIntoDOM(cell: NotebookCell, index: number) {
+		const cellsContainer = this._iframeDocument.querySelector('.notebook-cells');
+		if (!cellsContainer) return;
+
+		// Render the cell HTML
+		const cellHtml = this._renderCell(cell);
+
+		// Create a temporary container to parse the HTML
+		const temp = this._iframeDocument.createElement('div');
+		temp.innerHTML = cellHtml;
+		const newCellElement = temp.firstElementChild as HTMLElement;
+
+		if (newCellElement) {
+			// Add animation class
+			newCellElement.classList.add('cell-new');
+
+			// Find the correct position to insert
+			const existingCells = cellsContainer.querySelectorAll('.notebook-cell');
+			if (index < existingCells.length) {
+				// Insert before the cell at the target index
+				cellsContainer.insertBefore(newCellElement, existingCells[index]);
+			} else {
+				// Append to the end
+				cellsContainer.appendChild(newCellElement);
+			}
+
+			// Auto-resize textarea if it's a code cell
+			const textarea = newCellElement.querySelector('.code-input') as HTMLTextAreaElement;
+			if (textarea) {
+				this._autoResizeTextarea(textarea);
+			}
+
+			// Remove animation class after animation completes
+			setTimeout(() => {
+				newCellElement.classList.remove('cell-new');
+			}, 300);
+		}
+	}
+
+	/**
+	 * Navigate to an adjacent cell (up/down arrow keys)
+	 */
+	private _selectAdjacentCell(direction: 'up' | 'down') {
+		if (!this._activeCellId || !this._notebook) return;
+
+		const currentIndex = this._notebook.cells.findIndex(c => c.id === this._activeCellId);
+		if (currentIndex === -1) return;
+
+		let targetIndex = -1;
+		if (direction === 'up' && currentIndex > 0) {
+			targetIndex = currentIndex - 1;
+		} else if (direction === 'down' && currentIndex < this._notebook.cells.length - 1) {
+			targetIndex = currentIndex + 1;
+		}
+
+		if (targetIndex !== -1) {
+			const targetCell = this._notebook.cells[targetIndex];
+			this._setActiveCell(targetCell.id, 'command');
+
+			// Scroll into view
+			const cellElement = this._iframeDocument.querySelector(`[data-cell-id="${targetCell.id}"]`) as HTMLElement;
+			if (cellElement) {
+				cellElement.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+			}
+		}
+	}
+
+	/**
+	 * Convert cell type between code and markdown
+	 */
+	private _convertCellType(cellId: string, newType: 'code' | 'markdown') {
+		if (!this._notebook) return;
+
+		// Sync edits first
+		this._syncCellEditsToState();
+
+		// Find the cell
+		const cell = this._notebook.cells.find(c => c.id === cellId);
+		if (!cell || cell.cell_type === newType) return;
+
+		// Update the cell type
+		cell.cell_type = newType;
+
+		// Clear outputs if converting to markdown
+		if (newType === 'markdown') {
+			cell.outputs = [];
+			cell.execution_count = null;
+		}
+
+		// Update the cell state
+		const state = this._cellStates.get(cellId);
+		if (state) {
+			state.output = '';
+		}
+
+		// Mark as modified
+		this._isModified = true;
+		this._updateUnsavedIndicator();
+
+		// Re-render the cell
+		const cellIndex = this._notebook.cells.findIndex(c => c.id === cellId);
+		const cellElement = this._iframeDocument.querySelector(`[data-cell-id="${cellId}"]`);
+		if (cellElement) {
+			// Render new HTML
+			const newHtml = this._renderCell(cell);
+			const temp = this._iframeDocument.createElement('div');
+			temp.innerHTML = newHtml;
+			const newCellElement = temp.firstElementChild;
+
+			if (newCellElement) {
+				cellElement.replaceWith(newCellElement);
+
+				// Auto-resize textarea if converted to code
+				if (newType === 'code') {
+					const textarea = newCellElement.querySelector('.code-input') as HTMLTextAreaElement;
+					if (textarea) {
+						this._autoResizeTextarea(textarea);
+					}
+				}
+
+				// Restore active state
+				this._setActiveCell(cellId, 'command');
+			}
+		}
+	}
+
+	/**
+	 * Delete a cell
+	 */
+	private _deleteCell(cellId: string) {
+		if (!this._notebook || this._notebook.cells.length <= 1) {
+			// Don't delete if it's the only cell
+			return;
+		}
+
+		// Sync edits first
+		this._syncCellEditsToState();
+
+		// Find the cell index
+		const cellIndex = this._notebook.cells.findIndex(c => c.id === cellId);
+		if (cellIndex === -1) return;
+
+		// Determine which cell to select after deletion
+		let nextCellId: string | null = null;
+		if (cellIndex < this._notebook.cells.length - 1) {
+			// Select the next cell
+			nextCellId = this._notebook.cells[cellIndex + 1].id;
+		} else if (cellIndex > 0) {
+			// Select the previous cell
+			nextCellId = this._notebook.cells[cellIndex - 1].id;
+		}
+
+		// Remove from notebook and state
+		this._notebook.cells.splice(cellIndex, 1);
+		this._cellStates.delete(cellId);
+
+		// Remove from DOM
+		const cellElement = this._iframeDocument.querySelector(`[data-cell-id="${cellId}"]`);
+		if (cellElement) {
+			cellElement.remove();
+		}
+
+		// Mark as modified
+		this._isModified = true;
+		this._updateUnsavedIndicator();
+
+		// Select the next cell
+		if (nextCellId) {
+			this._setActiveCell(nextCellId, 'command');
+		}
+	}
+
+	/**
+	 * Sync cell edits from DOM to state before operations that modify structure
+	 */
+	private _syncCellEditsToState() {
+		if (!this._notebook) return;
+
+		for (const cell of this._notebook.cells) {
+			const cellElement = this._iframeDocument.querySelector(`[data-cell-id="${cell.id}"]`);
+			if (!cellElement) continue;
+
+			if (cell.cell_type === 'code') {
+				const textarea = cellElement.querySelector('.code-input') as HTMLTextAreaElement;
+				if (textarea) {
+					cell.source = textarea.value;
+					const state = this._cellStates.get(cell.id);
+					if (state) {
+						state.source = textarea.value;
+					}
+				}
+			} else if (cell.cell_type === 'markdown') {
+				const contentEditable = cellElement.querySelector('[contenteditable="true"]') as HTMLElement;
+				if (contentEditable) {
+					// Get the raw source from data attribute or innerText
+					// Note: data-raw-source is URL-encoded (via encodeURIComponent in _escapeAttr), so decode it
+					let rawSource = contentEditable.dataset.rawSource;
+					if (rawSource) {
+						rawSource = decodeURIComponent(rawSource);
+					} else {
+						rawSource = contentEditable.innerText;
+					}
+					cell.source = rawSource;
+					const state = this._cellStates.get(cell.id);
+					if (state) {
+						state.source = rawSource;
+					}
+				}
+			}
+		}
+	}
+
+	/**
+	 * Update the unsaved indicator in the header
+	 */
+	private _updateUnsavedIndicator() {
+		const indicator = this._iframeDocument.querySelector('.unsaved-indicator') as HTMLElement;
+		if (indicator) {
+			indicator.style.display = this._isModified ? 'inline-flex' : 'none';
+		}
+	}
+
+	/**
+	 * Export the notebook by dispatching an event to the parent
+	 */
+	private _exportNotebook() {
+		console.log('[NotebookView._exportNotebook] START');
+
+		if (!this._notebook) {
+			console.error('[NotebookView._exportNotebook] No notebook available!');
+			return;
+		}
+
+		console.log('[NotebookView._exportNotebook] Syncing cell edits...');
+		// Sync all edits first
+		this._syncCellEditsToState();
+
+		console.log('[NotebookView._exportNotebook] Creating export event with notebook:', {
+			cellCount: this._notebook.cells.length,
+			hasMetadata: !!this._notebook.metadata
+		});
+
+		// Dispatch custom event to parent (reader.js will handle the file save)
+		const event = new CustomEvent('notebook-export', {
+			detail: { notebook: this._notebook },
+			bubbles: true,
+		});
+
+		console.log('[NotebookView._exportNotebook] Dispatching event to iframe window:', this._iframeWindow);
+		this._iframeWindow.dispatchEvent(event);
+		console.log('[NotebookView._exportNotebook] Event dispatched successfully');
 	}
 
 	/**
