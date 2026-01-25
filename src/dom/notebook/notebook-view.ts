@@ -262,6 +262,7 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 	}
 
 	protected override async _handleViewCreated(viewState: Partial<Readonly<NotebookViewState>>) {
+		console.log('[NotebookView._handleViewCreated] CALLED');
 		await super._handleViewCreated(viewState);
 
 		// Inject styles
@@ -270,7 +271,9 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 		this._iframeDocument.head.append(style);
 
 		// Setup cell interactions (Run buttons, editing, etc.)
+		console.log('[NotebookView._handleViewCreated] About to call _setupCellInteractions');
 		this._setupCellInteractions();
+		console.log('[NotebookView._handleViewCreated] Finished _setupCellInteractions');
 
 		// Update annotation overlay size
 		this._updateAnnotationOverlaySize();
@@ -299,11 +302,12 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 
 	private _setupCellInteractions() {
 		console.log('[NotebookView._setupCellInteractions] Setting up cell interactions');
+		console.log('[NotebookView._setupCellInteractions] iframe document:', this._iframeDocument);
 
 		// Handle button clicks
 		this._iframeDocument.addEventListener('click', (e) => {
 			const target = e.target as HTMLElement;
-			console.log('[NotebookView] Click detected on:', target.tagName, target.className);
+			console.log('[NotebookView] Click detected on:', target.tagName, target.className, 'classList:', target.classList);
 
 			// Export button
 			const exportButton = target.closest('[data-action="export"]') as HTMLElement;
@@ -342,7 +346,7 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 			if (cell) {
 				const cellId = cell.dataset.cellId || null;
 				// Only enter command mode if not clicking on an editable element
-				const isEditableClick = target.classList.contains('code-input') ||
+				const isEditableClick = (target.classList && target.classList.contains('code-input')) ||
 					target.isContentEditable ||
 					target.closest('[contenteditable="true"]');
 
@@ -356,7 +360,7 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 		this._iframeDocument.addEventListener('focus', (e) => {
 			const target = e.target as HTMLElement;
 
-			if (target.classList.contains('code-input') || target.isContentEditable) {
+			if ((target.classList && target.classList.contains('code-input')) || target.isContentEditable) {
 				const cell = target.closest('.notebook-cell') as HTMLElement;
 				if (cell && cell.dataset.cellId) {
 					this._setActiveCell(cell.dataset.cellId, 'edit');
@@ -908,17 +912,23 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 
 	private async _executeCell(cellId: string) {
 		console.log('[NotebookView._executeCell] START for cell:', cellId);
-		
+
 		const state = this._cellStates.get(cellId);
 		console.log('[NotebookView._executeCell] Cell state:', state);
-		if (!state || state.executionState === 'running') {
-			console.log('[NotebookView._executeCell] Skipping - no state or already running');
+		if (!state) {
+			console.log('[NotebookView._executeCell] Skipping - no state');
 			return;
 		}
 
 		const cellElement = this._iframeDocument.querySelector(`.notebook-cell[data-cell-id="${cellId}"]`) as HTMLElement;
 		if (!cellElement) {
 			console.log('[NotebookView._executeCell] Skipping - no cell element found');
+			return;
+		}
+
+		// Check if already running using CSS class (more reliable than state)
+		if (cellElement.classList.contains('cell-running')) {
+			console.log('[NotebookView._executeCell] Skipping - cell is currently executing');
 			return;
 		}
 
@@ -934,7 +944,11 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 
 		if (!code.trim()) return;
 
-		// Update state
+		// Clear any existing output for re-execution
+		console.log('[NotebookView._executeCell] Clearing output and resetting state');
+		outputDiv.innerHTML = '';
+
+		// Update state to running (reset from any previous state)
 		state.executionState = 'running';
 		cellElement.classList.add('cell-running');
 
