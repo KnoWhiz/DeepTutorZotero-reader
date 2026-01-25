@@ -182,6 +182,8 @@ html, body {
 		overflow: hidden; // Hide scrollbar - textarea grows to fit content
 		outline: none;
 		box-sizing: border-box;
+		tab-size: 4;
+		-moz-tab-size: 4;
 
 		&:focus {
 			background-color: var(--notebook-cell-bg);
