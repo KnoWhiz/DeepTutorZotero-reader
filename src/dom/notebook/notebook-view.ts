@@ -400,6 +400,27 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 				target.isContentEditable ||
 				target.closest('[contenteditable="true"]');
 
+			// ALWAYS handle Tab in code inputs to stop focus from leaving and insert tab character
+			if (e.key === 'Tab' && target.classList.contains('code-input')) {
+				e.preventDefault();
+				e.stopPropagation();
+
+				const textarea = target as HTMLTextAreaElement;
+				const start = textarea.selectionStart;
+				const end = textarea.selectionEnd;
+				const value = textarea.value;
+
+				// Insert tab at cursor position
+				textarea.value = value.substring(0, start) + '\t' + value.substring(end);
+
+				// Move cursor after the inserted tab
+				textarea.selectionStart = textarea.selectionEnd = start + 1;
+
+				// Trigger input event to update state and auto-resize
+				textarea.dispatchEvent(new Event('input', { bubbles: true }));
+				return;
+			}
+
 			// Edit mode keyboard shortcuts
 			if (isEditing && this._cellMode === 'edit') {
 				// Escape - exit edit mode, enter command mode
@@ -862,25 +883,25 @@ class NotebookView extends DOMView<NotebookViewState, NotebookViewData> {
 	 */
 	protected override _handleKeyDown(event: KeyboardEvent) {
 		const target = event.target as HTMLElement;
-		
+
 		// Check if we're editing in a contenteditable or textarea
-		const isEditing = target.isContentEditable 
-			|| target.tagName === 'TEXTAREA' 
+		const isEditing = target.isContentEditable
+			|| target.tagName === 'TEXTAREA'
 			|| target.tagName === 'INPUT'
 			|| target.closest('[contenteditable="true"]');
-		
+
 		if (isEditing) {
 			// List of keys that should be handled by the editable element, not passed to main window
-			const editingKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 
+			const editingKeys = ['Backspace', 'Delete', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
 				'Home', 'End', 'Enter', 'Tab'];
-			
+
 			// For editing keys or regular typing, don't pass to parent handler
 			if (editingKeys.includes(event.key) || event.key.length === 1) {
 				// Don't call super._handleKeyDown - just handle focus ring logic
 				return;
 			}
 		}
-		
+
 		// For non-editing scenarios, use normal handling
 		super._handleKeyDown(event);
 	}
