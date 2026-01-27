@@ -90,12 +90,41 @@
 	max-width: 198px;
 	padding: 8px;
 	gap: 8px;
+	transition: max-width 0.15s ease-out;  // Smooth width transition
+
+	// EXPANDED STATE: Colors + toggle side by side on same row
+	&.deeptutor-translate-expanded {
+		max-width: 450px;
+		min-width: 350px;
+
+		.selection-popup-row {
+			flex-wrap: nowrap;  // Side by side
+		}
+
+		.colors {
+			flex: 0 0 auto;  // Natural width
+		}
+
+		.tool-toggle {
+			flex: 1 1 auto;  // Allow growing to fill space alongside colors
+			min-width: 80px;  // Ensure minimum size
+		}
+	}
+
+	// COLLAPSED STATE (default): Stacked layout
+	.selection-popup-row {
+		display: flex;
+		flex-wrap: wrap;  // Allow stacking
+		align-items: center;
+		gap: 8px;
+	}
 
 	.colors {
 		gap: 4px;
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		justify-content: flex-start;
+		flex: 1 1 100%;  // Full width (row 1)
 	}
 
 	.color-button {
@@ -109,6 +138,7 @@
 		border-radius: 6px;
 		padding: 1px;
 		display: flex;
+		flex: 1 1 100%;  // Full width (row 2) - stacked below colors
 		box-shadow: 0px 0px 2px 0px #0000000D inset, 0px 0px 4px 0px #0000000D inset, 0px 0px 2px 0px #0000000D inset;
 
 		.highlight, .underline {
@@ -144,13 +174,191 @@
 	}
 
 	.custom-sections {
-		padding-top: 5px;
+		padding-top: 0;  // Remove extra top padding
 
 		.section {
-			padding: 5px 0;
-			border-top: 1px solid #d7dad7;
+			padding: 0;  // Remove section padding
+			border-top: none;  // Remove divider line
 		}
 	}
+}
+
+.selection-popup .deeptutor-translate-section {
+	margin-top: 8px;
+	padding-top: 8px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	border-top: 1px solid var(--fill-quinary);  // Divider works in light & dark mode
+}
+
+// Pre-translate button: transparent by default, show box on hover
+.selection-popup .deeptutor-translate-bar .wide-button.deeptutor-translate-button {
+	background: transparent;
+	box-shadow: none;
+
+	&:hover {
+		background: var(--material-button);
+		box-shadow: 0px 0px 0px 0.5px rgba(0, 0, 0, 0.05), 0px 0.5px 2.5px 0px rgba(0, 0, 0, 0.30);
+	}
+}
+
+.selection-popup .deeptutor-translate-bar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.selection-popup .deeptutor-translate-bar .wide-button {
+	width: auto;
+}
+
+.selection-popup .deeptutor-translate-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 10px;
+}
+
+.selection-popup .deeptutor-translate-caret {
+	font-size: 12px;
+	opacity: 0.8;
+}
+
+.selection-popup .deeptutor-translate-pane {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;  // Slightly more breathing room
+	width: 100%;  // Full width of expanded popup
+	padding: 0 16px;  // Symmetric padding for centered content
+}
+
+.selection-popup .deeptutor-translate-header {
+	display: flex;
+	align-items: center;
+	justify-content: flex-start;
+	gap: 8px;
+	font-weight: 600;
+	min-width: 0;
+	overflow: visible;
+	width: 100%;  // Ensure full width
+	padding-left: 0;  // No left offset
+	margin-left: 0;   // No negative margin
+}
+
+.selection-popup .deeptutor-translate-header button {
+	white-space: nowrap;
+	overflow: visible;  // Don't clip text
+	margin-left: 0;  // Ensure button doesn't shift left
+	flex-shrink: 0;  // Prevent button from shrinking and clipping text
+	width: auto;  // Override toolbar-button's 28px width
+	height: auto;  // Override toolbar-button's 28px height
+	padding: 4px 8px 4px 0;  // Remove left padding to align with labels below
+}
+
+.selection-popup .deeptutor-translate-controls {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 12px;  // Increase gap for better spacing
+	width: 100%;  // Ensure full width for centering
+}
+
+.selection-popup .deeptutor-translate-label {
+	font-size: 13px;  // Larger to match Figma mockup
+	color: var(--fill-secondary);
+	margin-bottom: 6px;
+}
+
+.selection-popup .deeptutor-translate-select {
+	width: 100%;
+	padding: 8px;  // Increase padding
+	border-radius: 6px;
+	border: 1px solid var(--fill-quinary);
+	background: var(--material-button);
+	color: var(--fill-primary);
+	font-size: 13px;  // Add explicit font size
+}
+
+.selection-popup .deeptutor-translate-actions {
+	display: flex;
+	gap: 8px;
+	margin-top: 8px;
+	justify-content: flex-end;  // Right-align buttons
+}
+
+.selection-popup .deeptutor-translate-actions button {
+	flex: 0 0 auto;  // Don't stretch, natural width
+	padding: 6px 12px;  // Smaller padding
+	border-radius: 6px;
+	font-weight: 500;
+	height: auto;
+	min-width: 70px;  // Minimum clickable width
+}
+
+// Clear button - white background, blue text
+.selection-popup .deeptutor-translate-btn-secondary {
+	background: var(--material-button);
+	color: var(--accent-blue);
+	border: 1px solid var(--accent-blue);
+	box-shadow: 0px 0px 0px 0.5px rgba(0, 0, 0, 0.05), 0px 0.5px 2.5px 0px rgba(0, 0, 0, 0.30);
+
+	&:active:not(:disabled) {
+		background: var(--fill-quarternary);
+	}
+}
+
+// Translate button - blue background, white text
+.selection-popup .deeptutor-translate-btn-primary {
+	background: linear-gradient(180deg, rgba(255, 255, 255, 0.17) 0%, rgba(255, 255, 255, 0.00) 100%), var(--accent-blue);
+	color: var(--accent-white);
+	border: none;
+	box-shadow: 0px 0px 0px 0.5px rgba(0, 0, 0, 0.05), 0px 0.5px 2.5px 0px rgba(0, 0, 0, 0.30);
+
+	&:active:not(:disabled) {
+		background: linear-gradient(to bottom, rgba(255, 255, 255, 0.25), rgba(0, 0, 0, 0.05)), darken(#0a6cf5, 6%);
+	}
+}
+
+.selection-popup .deeptutor-translate-result {
+	background: var(--material-button);
+	color: var(--fill-primary);
+	padding: 12px;  // Increase padding
+	border-radius: 6px;
+	font-size: 13px;
+	line-height: 1.5;
+	white-space: pre-wrap;
+	width: 100%;
+	min-height: 120px;  // Minimum height for taller appearance
+	max-width: 400px;
+	margin: 0 auto;  // Center the result box
+	max-height: 300px;  // Reduce max to feel more proportionate
+	overflow-y: auto;
+	box-shadow: 0px 0px 0px 0.5px rgba(0, 0, 0, 0.05), 0px 0.5px 2.5px 0px rgba(0, 0, 0, 0.30);
+	border: 1px solid var(--fill-quinary);
+	box-sizing: border-box;
+}
+
+.selection-popup .deeptutor-translate-result.deeptutor-translate-error {
+	color: #c62828;
+}
+
+.selection-popup .deeptutor-translate-muted {
+	font-size: 11px;
+	color: var(--fill-secondary);
+}
+
+.selection-popup .deeptutor-translate-badge-right {
+	flex: 1 1 auto;
+	text-align: right;
+}
+
+.selection-popup .deeptutor-translate-caret {
+	transition: transform 0.2s ease;
+}
+
+.selection-popup .deeptutor-translate-pane .deeptutor-translate-caret {
+	transform: rotate(180deg);
 }
 
 .preview-popup {
