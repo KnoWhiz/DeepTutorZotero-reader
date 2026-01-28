@@ -250,7 +250,7 @@
 .selection-popup .deeptutor-translate-header button {
 	white-space: nowrap;
 	overflow: visible;  // Don't clip text
-	margin-left: 0;  // Ensure button doesn't shift left
+	margin-left: -8px;  // Pull left so T aligns with "Translate from" label below
 	flex-shrink: 0;  // Prevent button from shrinking and clipping text
 	width: auto;  // Override toolbar-button's 28px width
 	height: auto;  // Override toolbar-button's 28px height
@@ -277,8 +277,8 @@
 	background: transparent;
 	border: none;
 	color: var(--fill-secondary);
-	font-size: 20px;  // Larger icon for visibility
-	font-weight: 600;  // Bolder appearance
+	font-size: 24px;  // Larger icon for visibility
+	font-weight: normal;  // Thinner appearance to match target design
 	cursor: pointer;
 	padding: 6px 8px;
 	border-radius: 4px;
