@@ -29,28 +29,30 @@ function SelectionPopup(props) {
 			uniqueRef={{}}
 			padding={20}
 		>
-			<div className="colors" data-tabstop={1}>
-				{ANNOTATION_COLORS.map((color, index) => (<button
-					key={index}
-					tabIndex={-1}
-					className="toolbar-button color-button"
-					title={l10n.getString(color[0])}
-					onClick={() => handleColorPick(color[1])}
-				><IconColor16 color={color[1]}/></button>))}
-			</div>
-			<div className="tool-toggle" data-tabstop={1}>
-				<button
-					tabIndex={-1}
-					className={cx('highlight', { active: props.textSelectionAnnotationMode === 'highlight' })}
-					title={l10n.getString('reader-highlight-text')}
-					onClick={() => props.onChangeTextSelectionAnnotationMode('highlight')}
-				><IconHighlight/></button>
-				<button
-					tabIndex={-1}
-					className={cx('underline', { active: props.textSelectionAnnotationMode === 'underline' })}
-					title={l10n.getString('reader-underline-text')}
-					onClick={() => props.onChangeTextSelectionAnnotationMode('underline')}
-				><IconUnderline/></button>
+			<div className="selection-popup-row">
+				<div className="colors" data-tabstop={1}>
+					{ANNOTATION_COLORS.map((color, index) => (<button
+						key={index}
+						tabIndex={-1}
+						className="toolbar-button color-button"
+						title={l10n.getString(color[0])}
+						onClick={() => handleColorPick(color[1])}
+					><IconColor16 color={color[1]}/></button>))}
+				</div>
+				<div className="tool-toggle" data-tabstop={1}>
+					<button
+						tabIndex={-1}
+						className={cx('highlight', { active: props.textSelectionAnnotationMode === 'highlight' })}
+						title={l10n.getString('reader-highlight-text')}
+						onClick={() => props.onChangeTextSelectionAnnotationMode('highlight')}
+					><IconHighlight/></button>
+					<button
+						tabIndex={-1}
+						className={cx('underline', { active: props.textSelectionAnnotationMode === 'underline' })}
+						title={l10n.getString('reader-underline-text')}
+						onClick={() => props.onChangeTextSelectionAnnotationMode('underline')}
+					><IconUnderline/></button>
+				</div>
 			</div>
 			{props.enableAddToNote &&
 				<button className="toolbar-button wide-button" data-tabstop={1} onClick={handleAddToNote}>

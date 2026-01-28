@@ -6,6 +6,8 @@ function ViewPopup({ id, rect, className, uniqueRef, padding, children, onRender
 	const [popupPosition, setPopupPosition] = useState(null);
 	const containerRef = useRef();
 	const xrect = useRef();
+	const resizeObserverRef = useRef(null);
+	const resizeRafRef = useRef(null);
 
 	const initialized = useRef(false);
 	const pos = useRef(null);
@@ -37,6 +39,34 @@ function ViewPopup({ id, rect, className, uniqueRef, padding, children, onRender
 		// Editor needs more time to get its final dimensions
 		setTimeout(updatePopupPosition, 0);
 	}, [uniqueRef, rect]);
+
+	useEffect(() => {
+		if (!containerRef.current || typeof ResizeObserver === 'undefined') {
+			return;
+		}
+
+		resizeObserverRef.current = new ResizeObserver(() => {
+			if (resizeRafRef.current) {
+				cancelAnimationFrame(resizeRafRef.current);
+			}
+			resizeRafRef.current = requestAnimationFrame(() => {
+				updatePopupPosition();
+			});
+		});
+
+		resizeObserverRef.current.observe(containerRef.current);
+
+		return () => {
+			if (resizeRafRef.current) {
+				cancelAnimationFrame(resizeRafRef.current);
+				resizeRafRef.current = null;
+			}
+			if (resizeObserverRef.current) {
+				resizeObserverRef.current.disconnect();
+				resizeObserverRef.current = null;
+			}
+		};
+	}, []);
 
 	function updatePopupPosition() {
 		if (!containerRef.current) {

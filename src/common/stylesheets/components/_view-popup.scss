@@ -218,7 +218,7 @@
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	padding: 6px 10px;
+	padding: 6px 12px;  // Increased horizontal padding for even spacing around text and chevron
 }
 
 .selection-popup .deeptutor-translate-caret {
@@ -250,18 +250,49 @@
 .selection-popup .deeptutor-translate-header button {
 	white-space: nowrap;
 	overflow: visible;  // Don't clip text
-	margin-left: 0;  // Ensure button doesn't shift left
+	margin-left: -8px;  // Pull left so T aligns with "Translate from" label below
 	flex-shrink: 0;  // Prevent button from shrinking and clipping text
 	width: auto;  // Override toolbar-button's 28px width
 	height: auto;  // Override toolbar-button's 28px height
-	padding: 4px 8px 4px 0;  // Remove left padding to align with labels below
+	padding: 4px 8px;  // Symmetric padding for hover state breathing room
 }
 
 .selection-popup .deeptutor-translate-controls {
 	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 12px;  // Increase gap for better spacing
+	grid-template-columns: 1fr auto 1fr;  // Source | Swap | Target
+	gap: 8px;  // Tighter gap for 3-column layout
 	width: 100%;  // Ensure full width for centering
+	align-items: end;  // Align swap button with dropdowns
+}
+
+// Swap button wrapper - aligns with select elements (below labels)
+.selection-popup .deeptutor-translate-swap {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding-top: 22px;  // Offset to align with selects (below labels)
+}
+
+.selection-popup .deeptutor-swap-btn {
+	background: transparent;
+	border: none;
+	color: var(--fill-secondary);
+	font-size: 24px;  // Larger icon for visibility
+	font-weight: normal;  // Thinner appearance to match target design
+	cursor: pointer;
+	padding: 6px 8px;
+	border-radius: 4px;
+	transition: background 0.15s ease, color 0.15s ease;
+
+	&:hover:not(:disabled) {
+		background: var(--fill-quinary);
+		color: var(--fill-primary);
+	}
+
+	&:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
 }
 
 .selection-popup .deeptutor-translate-label {
@@ -272,6 +303,7 @@
 
 .selection-popup .deeptutor-translate-select {
 	width: 100%;
+	min-width: 120px;  // Prevent dimension changes on first dropdown interaction
 	padding: 8px;  // Increase padding
 	border-radius: 6px;
 	border: 1px solid var(--fill-quinary);
@@ -284,7 +316,14 @@
 	display: flex;
 	gap: 8px;
 	margin-top: 8px;
-	justify-content: flex-end;  // Right-align buttons
+	justify-content: space-between;  // Clear left, Copy+Translate right
+	align-items: center;
+}
+
+// Right-side button group (Copy + Translate)
+.selection-popup .deeptutor-translate-actions-right {
+	display: flex;
+	gap: 8px;
 }
 
 .selection-popup .deeptutor-translate-actions button {
@@ -293,7 +332,8 @@
 	border-radius: 6px;
 	font-weight: 500;
 	height: auto;
-	min-width: 70px;  // Minimum clickable width
+	min-width: 85px;  // Increased to fit "Translating..." text
+	white-space: nowrap;  // Prevent text wrapping/overflow
 }
 
 // Clear button - white background, blue text
