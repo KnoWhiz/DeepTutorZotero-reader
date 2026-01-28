@@ -254,7 +254,7 @@
 	flex-shrink: 0;  // Prevent button from shrinking and clipping text
 	width: auto;  // Override toolbar-button's 28px width
 	height: auto;  // Override toolbar-button's 28px height
-	padding: 4px 8px 4px 0;  // Remove left padding to align with labels below
+	padding: 4px 8px;  // Symmetric padding for hover state breathing room
 }
 
 .selection-popup .deeptutor-translate-controls {
@@ -277,7 +277,8 @@
 	background: transparent;
 	border: none;
 	color: var(--fill-secondary);
-	font-size: 16px;
+	font-size: 20px;  // Larger icon for visibility
+	font-weight: 600;  // Bolder appearance
 	cursor: pointer;
 	padding: 6px 8px;
 	border-radius: 4px;
@@ -330,7 +331,8 @@
 	border-radius: 6px;
 	font-weight: 500;
 	height: auto;
-	min-width: 70px;  // Minimum clickable width
+	min-width: 85px;  // Increased to fit "Translating..." text
+	white-space: nowrap;  // Prevent text wrapping/overflow
 }
 
 // Clear button - white background, blue text
