@@ -303,6 +303,7 @@
 
 .selection-popup .deeptutor-translate-select {
 	width: 100%;
+	min-width: 120px;  // Prevent dimension changes on first dropdown interaction
 	padding: 8px;  // Increase padding
 	border-radius: 6px;
 	border: 1px solid var(--fill-quinary);
