@@ -93,7 +93,7 @@
 	transition: max-width 0.15s ease-out;  // Smooth width transition
 
 	// EXPANDED STATE: Colors + toggle side by side on same row
-	&.deeptutor-translate-expanded {
+	&[data-deeptutor-translate-expanded="1"] {
 		max-width: 450px;
 		min-width: 350px;
 
